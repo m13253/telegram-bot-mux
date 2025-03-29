@@ -186,15 +186,15 @@ func (s *Server) getUpdates(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) forwardAPI(w http.ResponseWriter, r *http.Request, method string) {
-	err := s.c.ForwardAPI(r.Context(), w, r, method)
+	err := s.c.ForwardRequest(r.Context(), w, r, s.conf.Upstream.ApiPrefix, method, false)
 	if err != nil {
 		log.Println("API forward error:", err)
 		s.reportError(w, http.StatusBadGateway)
 	}
 }
 
-func (s *Server) forwardFile(w http.ResponseWriter, r *http.Request, method string) {
-	err := s.c.ForwardFile(r.Context(), w, r, method)
+func (s *Server) forwardFile(w http.ResponseWriter, r *http.Request, fileID string) {
+	err := s.c.ForwardRequest(r.Context(), w, r, s.conf.Upstream.FilePrefix, fileID, true)
 	if err != nil {
 		log.Println("File forward error:", err)
 		s.reportError(w, http.StatusBadGateway)

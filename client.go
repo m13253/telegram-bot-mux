@@ -164,12 +164,12 @@ func (c *Client) StartPolling(ctx context.Context) error {
 	}
 }
 
-func (c *Client) ForwardAPI(ctx context.Context, w http.ResponseWriter, r *http.Request, method string) error {
+func (c *Client) ForwardRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, prefix string, suffix string, isFile bool) error {
 	var requestURL string
 	if len(r.URL.RawQuery) == 0 {
-		requestURL = fmt.Sprintf("%s/%s", c.conf.Upstream.ApiPrefix, method)
+		requestURL = fmt.Sprintf("%s/%s", prefix, suffix)
 	} else {
-		requestURL = fmt.Sprintf("%s/%s?%s", c.conf.Upstream.ApiPrefix, method, r.URL.RawQuery)
+		requestURL = fmt.Sprintf("%s/%s?%s", prefix, suffix, r.URL.RawQuery)
 	}
 	log.Println(r.Method, requestURL)
 
@@ -200,8 +200,8 @@ func (c *Client) ForwardAPI(ctx context.Context, w http.ResponseWriter, r *http.
 	w.WriteHeader(resp.StatusCode)
 	// Too late to report error, so ignore errors from here
 
-	echoProcessor := c.echoProcessor[method]
-	if echoProcessor == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	echoProcessor := c.echoProcessor[suffix]
+	if echoProcessor == nil || isFile || resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		_, err = io.Copy(w, resp.Body)
 		if err != nil {
 			debug.PrintStack()
@@ -219,48 +219,6 @@ func (c *Client) ForwardAPI(ctx context.Context, w http.ResponseWriter, r *http.
 	}
 
 	echoProcessor(chatID, bodyCopy.Bytes())
-	return nil
-}
-
-func (c *Client) ForwardFile(ctx context.Context, w http.ResponseWriter, r *http.Request, method string) error {
-	var requestURL string
-	if len(r.URL.RawQuery) == 0 {
-		requestURL = fmt.Sprintf("%s/%s", c.conf.Upstream.FilePrefix, method)
-	} else {
-		requestURL = fmt.Sprintf("%s/%s?%s", c.conf.Upstream.FilePrefix, method, r.URL.RawQuery)
-	}
-	log.Println(r.Method, requestURL)
-
-	req, err := http.NewRequestWithContext(ctx, r.Method, requestURL, r.Body)
-	if err != nil {
-		return fmt.Errorf("failed to send HTTP request: %v", err)
-	}
-	for k, v := range r.Header {
-		if k != "Accept-Encoding" && k != "Content-Encoding" && k != "Connection" && k != "Host" && k != "Proxy-Connection" && k != "User-Agent" {
-			req.Header[k] = v
-		}
-	}
-	req.Header.Set("User-Agent", UserAgent)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("upstream HTTP request error: %v", err)
-	}
-	defer resp.Body.Close()
-
-	respHeader := w.Header()
-	for k, v := range resp.Header {
-		if k != "Accept-Encoding" && k != "Content-Encoding" && k != "Connection" && k != "Proxy-Connection" {
-			respHeader[k] = v
-		}
-	}
-	w.WriteHeader(resp.StatusCode)
-	// Too late to report error, so ignore errors from here
-
-	_, err = io.Copy(w, resp.Body)
-	if err != nil {
-		debug.PrintStack()
-		log.Println("HTTP error:", err)
-	}
 	return nil
 }
 
