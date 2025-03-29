@@ -18,19 +18,23 @@ type Config struct {
 
 type ConfigUpstream struct {
 	ApiUrl               string   `toml:"api_url"`
+	FileUrl              string   `toml:"file_url"`
 	AuthToken            string   `toml:"auth_token"`
-	Prefix               string   `toml:"-"`
 	PollingTimeout       uint64   `toml:"polling_timeout"`
 	MaxRetryInterval     uint64   `toml:"max_retry_interval"`
 	FilterUpdateTypes    []string `toml:"filter_update_types"`
+	ApiPrefix            string   `toml:"-"`
+	FilePrefix           string   `toml:"-"`
 	FilterUpdateTypesStr string   `toml:"-"`
 }
 
 type ConfigDownstream struct {
 	ListenAddr string   `toml:"listen_addr"`
 	ApiPath    string   `toml:"api_path"`
+	FilePath   string   `toml:"file_path"`
 	AuthToken  string   `toml:"auth_token"`
-	Prefix     []string `toml:"-"`
+	ApiPrefix  []string `toml:"-"`
+	FilePrefix []string `toml:"-"`
 }
 
 func Load(path string) (*Config, error) {
@@ -43,12 +47,14 @@ func Load(path string) (*Config, error) {
 		DB: "tbmux.db",
 		Upstream: ConfigUpstream{
 			ApiUrl:            "https://api.telegram.org/bot",
+			FileUrl:           "https://api.telegram.org/file/bot",
 			PollingTimeout:    60,
 			MaxRetryInterval:  600,
 			FilterUpdateTypes: []string{},
 		},
 		Downstream: ConfigDownstream{
-			ApiPath: "/bot",
+			ApiPath:  "/bot",
+			FilePath: "/file/bot",
 		},
 	}
 	_, err = d.Decode(conf)
@@ -62,6 +68,9 @@ func Load(path string) (*Config, error) {
 	}
 	if len(conf.Upstream.ApiUrl) == 0 {
 		return nil, &errConfigFieldIsEmpty{field: "upstream.api_url"}
+	}
+	if len(conf.Upstream.FileUrl) == 0 {
+		return nil, &errConfigFieldIsEmpty{field: "upstream.file_url"}
 	}
 	if len(conf.Upstream.AuthToken) == 0 {
 		return nil, &errConfigFieldIsEmpty{field: "upstream.auth_token"}
@@ -78,16 +87,16 @@ func Load(path string) (*Config, error) {
 	if len(conf.Downstream.ApiPath) == 0 {
 		return nil, &errConfigFieldIsEmpty{field: "downstream.api_path"}
 	}
+	if len(conf.Downstream.FilePath) == 0 {
+		return nil, &errConfigFieldIsEmpty{field: "downstream.file_path"}
+	}
 	if len(conf.Downstream.AuthToken) == 0 {
 		return nil, &errConfigFieldIsEmpty{field: "downstream.auth_token"}
 	}
 
 	// Join prefixes
-	conf.Upstream.Prefix = conf.Upstream.ApiUrl + url.PathEscape(conf.Upstream.AuthToken)
-	prefix, err := url.ParseRequestURI(conf.Downstream.ApiPath)
-	if err != nil {
-		return nil, fmt.Errorf("invalid config file: downstream.api_path is invalid: %v", err)
-	}
+	conf.Upstream.ApiPrefix = conf.Upstream.ApiUrl + url.PathEscape(conf.Upstream.AuthToken)
+	conf.Upstream.FilePrefix = conf.Upstream.FileUrl + url.PathEscape(conf.Upstream.AuthToken)
 
 	// Convert FilterUpdateTypes to string
 	filterUpdateTypesBuf, err := json.Marshal(conf.Upstream.FilterUpdateTypes)
@@ -97,11 +106,27 @@ func Load(path string) (*Config, error) {
 	conf.Upstream.FilterUpdateTypesStr = url.QueryEscape(string(filterUpdateTypesBuf))
 
 	// Split prefixes
-	conf.Downstream.Prefix = strings.Split(prefix.EscapedPath(), "/")
-	for i := range conf.Downstream.Prefix {
-		conf.Downstream.Prefix[i], err = url.PathUnescape(conf.Downstream.Prefix[i])
+	apiPrefix, err := url.ParseRequestURI(conf.Downstream.ApiPath)
+	if err != nil {
+		return nil, fmt.Errorf("invalid config file: downstream.api_path is invalid: %v", err)
+	}
+	conf.Downstream.ApiPrefix = strings.Split(apiPrefix.EscapedPath(), "/")
+	for i := range conf.Downstream.ApiPrefix {
+		conf.Downstream.ApiPrefix[i], err = url.PathUnescape(conf.Downstream.ApiPrefix[i])
 		if err != nil {
 			return nil, fmt.Errorf("invalid config file: downstream.api_path is invalid: %v", err)
+		}
+	}
+
+	filePrefix, err := url.ParseRequestURI(conf.Downstream.FilePath)
+	if err != nil {
+		return nil, fmt.Errorf("invalid config file: downstream.file_path is invalid: %v", err)
+	}
+	conf.Downstream.FilePrefix = strings.Split(filePrefix.EscapedPath(), "/")
+	for i := range conf.Downstream.FilePrefix {
+		conf.Downstream.FilePrefix[i], err = url.PathUnescape(conf.Downstream.FilePrefix[i])
+		if err != nil {
+			return nil, fmt.Errorf("invalid config file: downstream.file_path is invalid: %v", err)
 		}
 	}
 	return conf, nil

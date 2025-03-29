@@ -1,8 +1,15 @@
 db = "tbmux.db"
 
 [upstream]
+api_url = "https://api.telegram.org/bot"
+file_url = "https://api.telegram.org/file/bot"
 auth_token = "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+polling_timeout = 60
+max_retry_interval = 600
+filter_update_types = []
 
 [downstream]
 listen_addr = "[::]:8080"
+api_path = "/bot"
+file_path = "/file/bot"
 auth_token = "123456:AnotherToken"

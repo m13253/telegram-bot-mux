@@ -70,9 +70,9 @@ func (c *Client) StartPolling(ctx context.Context) error {
 	for {
 		var requestURL string
 		if offset == 0 {
-			requestURL = fmt.Sprintf("%s/getUpdates?timeout=%d&allowed_updates=%s", c.conf.Upstream.Prefix, c.conf.Upstream.PollingTimeout, c.conf.Upstream.FilterUpdateTypesStr)
+			requestURL = fmt.Sprintf("%s/getUpdates?timeout=%d&allowed_updates=%s", c.conf.Upstream.ApiPrefix, c.conf.Upstream.PollingTimeout, c.conf.Upstream.FilterUpdateTypesStr)
 		} else {
-			requestURL = fmt.Sprintf("%s/getUpdates?offset=%d&timeout=%d&allowed_updates=%s", c.conf.Upstream.Prefix, offset, c.conf.Upstream.PollingTimeout, c.conf.Upstream.FilterUpdateTypesStr)
+			requestURL = fmt.Sprintf("%s/getUpdates?offset=%d&timeout=%d&allowed_updates=%s", c.conf.Upstream.ApiPrefix, offset, c.conf.Upstream.PollingTimeout, c.conf.Upstream.FilterUpdateTypesStr)
 		}
 		log.Println("GET", requestURL)
 
@@ -165,10 +165,11 @@ func (c *Client) StartPolling(ctx context.Context) error {
 func (c *Client) ForwardAPI(ctx context.Context, w http.ResponseWriter, r *http.Request, method string) error {
 	var requestURL string
 	if len(r.URL.RawQuery) == 0 {
-		requestURL = fmt.Sprintf("%s/%s", c.conf.Upstream.Prefix, method)
+		requestURL = fmt.Sprintf("%s/%s", c.conf.Upstream.ApiPrefix, method)
 	} else {
-		requestURL = fmt.Sprintf("%s/%s?%s", c.conf.Upstream.Prefix, method, r.URL.RawQuery)
+		requestURL = fmt.Sprintf("%s/%s?%s", c.conf.Upstream.ApiPrefix, method, r.URL.RawQuery)
 	}
+	log.Println(r.Method, requestURL)
 
 	chatID, _ := strconv.ParseInt(r.FormValue("chat_id"), 10, 64)
 
@@ -216,6 +217,48 @@ func (c *Client) ForwardAPI(ctx context.Context, w http.ResponseWriter, r *http.
 	}
 
 	echoProcessor(chatID, bodyCopy.Bytes())
+	return nil
+}
+
+func (c *Client) ForwardFile(ctx context.Context, w http.ResponseWriter, r *http.Request, method string) error {
+	var requestURL string
+	if len(r.URL.RawQuery) == 0 {
+		requestURL = fmt.Sprintf("%s/%s", c.conf.Upstream.FilePrefix, method)
+	} else {
+		requestURL = fmt.Sprintf("%s/%s?%s", c.conf.Upstream.FilePrefix, method, r.URL.RawQuery)
+	}
+	log.Println(r.Method, requestURL)
+
+	req, err := http.NewRequestWithContext(ctx, r.Method, requestURL, r.Body)
+	if err != nil {
+		return fmt.Errorf("failed to send HTTP request: %v", err)
+	}
+	for k, v := range r.Header {
+		if k != "Accept-Encoding" && k != "Content-Encoding" && k != "Connection" && k != "Host" && k != "Proxy-Connection" && k != "User-Agent" {
+			req.Header[k] = v
+		}
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 Telegram-bot-muxer/1.0 (+https://github.com/m13253/telegram-bot-muxer)")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("upstream HTTP request error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	respHeader := w.Header()
+	for k, v := range resp.Header {
+		if k != "Accept-Encoding" && k != "Content-Encoding" && k != "Connection" && k != "Proxy-Connection" {
+			respHeader[k] = v
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	// Too late to report error, so ignore errors from here
+
+	_, err = io.Copy(w, resp.Body)
+	if err != nil {
+		debug.PrintStack()
+		log.Println("HTTP error:", err)
+	}
 	return nil
 }
 

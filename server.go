@@ -51,41 +51,84 @@ func (s *Server) Serve() error {
 	return err
 }
 
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	prefixSegCount := len(s.conf.Downstream.Prefix)
+func (s *Server) matchApiUrl(r *http.Request) (string, int) {
+	prefixSegCount := len(s.conf.Downstream.ApiPrefix)
 	path := strings.SplitN(r.URL.EscapedPath(), "/", prefixSegCount+1)
 	for i := range prefixSegCount {
 		if i >= len(path) {
-			s.notFoundHandler(w, r)
-			return
+			return "", http.StatusNotFound
 		} else if i == prefixSegCount-1 {
 			seg, err := url.PathUnescape(path[i])
-			if err != nil || !strings.HasPrefix(seg, s.conf.Downstream.Prefix[i]) {
-				s.notFoundHandler(w, r)
-				return
+			if err != nil || !strings.HasPrefix(seg, s.conf.Downstream.ApiPrefix[i]) {
+				return "", http.StatusNotFound
 			}
-			if seg != s.conf.Downstream.Prefix[i]+s.conf.Downstream.AuthToken {
-				s.unauthorizedHandler(w, r)
-				return
+			if seg != s.conf.Downstream.ApiPrefix[i]+s.conf.Downstream.AuthToken {
+				return "", http.StatusUnauthorized
 			}
 		} else {
 			seg, err := url.PathUnescape(path[i])
-			if err != nil || seg != s.conf.Downstream.Prefix[i] {
-				s.notFoundHandler(w, r)
-				return
+			if err != nil || seg != s.conf.Downstream.ApiPrefix[i] {
+				return "", http.StatusNotFound
 			}
 		}
 	}
 	if len(path) != prefixSegCount+1 {
-		s.notFoundHandler(w, r)
+		return "", http.StatusNotFound
+	}
+	return path[prefixSegCount], http.StatusOK
+}
+
+func (s *Server) matchFileUrl(r *http.Request) (string, int) {
+	prefixSegCount := len(s.conf.Downstream.FilePrefix)
+	path := strings.SplitN(r.URL.EscapedPath(), "/", prefixSegCount+1)
+	for i := range prefixSegCount {
+		if i >= len(path) {
+			return "", http.StatusNotFound
+		} else if i == prefixSegCount-1 {
+			seg, err := url.PathUnescape(path[i])
+			if err != nil || !strings.HasPrefix(seg, s.conf.Downstream.FilePrefix[i]) {
+				return "", http.StatusNotFound
+			}
+			if seg != s.conf.Downstream.FilePrefix[i]+s.conf.Downstream.AuthToken {
+				return "", http.StatusUnauthorized
+			}
+		} else {
+			seg, err := url.PathUnescape(path[i])
+			if err != nil || seg != s.conf.Downstream.FilePrefix[i] {
+				return "", http.StatusNotFound
+			}
+		}
+	}
+	if len(path) != prefixSegCount+1 {
+		return "", http.StatusNotFound
+	}
+	return path[prefixSegCount], http.StatusOK
+}
+
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	method, code := s.matchApiUrl(r)
+	if code != http.StatusNotFound {
+		if code != http.StatusOK {
+			s.reportError(w, code)
+			return
+		}
+		if method == "getUpdates" {
+			s.getUpdates(w, r)
+			return
+		}
+		s.forwardAPI(w, r, method)
 		return
 	}
-	method := path[prefixSegCount]
-	if method == "getUpdates" {
-		s.getUpdates(w, r)
+	fileID, code := s.matchFileUrl(r)
+	if code != http.StatusNotFound {
+		if code != http.StatusOK {
+			s.reportError(w, code)
+			return
+		}
+		s.forwardFile(w, r, fileID)
 		return
 	}
-	s.forwardAPI(w, r, method)
+	s.reportError(w, code)
 }
 
 func (s *Server) getUpdates(w http.ResponseWriter, r *http.Request) {
@@ -109,7 +152,7 @@ func (s *Server) getUpdates(w http.ResponseWriter, r *http.Request) {
 		for updateJSON, err := range s.db.GetUpdates(r.Context(), offset, limit) {
 			if err != nil {
 				cancel()
-				s.internalServerErrorHandler(w, r, err)
+				s.internalServerErrorHandler(w, err)
 				return
 			}
 			if !updatesReceived {
@@ -146,41 +189,29 @@ func (s *Server) forwardAPI(w http.ResponseWriter, r *http.Request, method strin
 	err := s.c.ForwardAPI(r.Context(), w, r, method)
 	if err != nil {
 		log.Println("API forward error:", err)
-		h := w.Header()
-		h.Del("Content-Length")
-		h.Set("Content-Type", "application/json")
-		h.Set("X-Content-Type-Options", "nosniff")
-		w.WriteHeader(http.StatusBadGateway)
-		w.Write([]byte("{\"ok\":false,\"error_code\":502,\"description\":\"Bad Gateway\"}"))
+		s.reportError(w, http.StatusBadGateway)
 	}
 }
 
-func (s *Server) unauthorizedHandler(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) forwardFile(w http.ResponseWriter, r *http.Request, method string) {
+	err := s.c.ForwardFile(r.Context(), w, r, method)
+	if err != nil {
+		log.Println("File forward error:", err)
+		s.reportError(w, http.StatusBadGateway)
+	}
+}
+
+func (s *Server) reportError(w http.ResponseWriter, code int) {
 	h := w.Header()
 	h.Del("Content-Length")
 	h.Set("Content-Type", "application/json")
 	h.Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(http.StatusUnauthorized)
-	w.Write([]byte("{\"ok\":false,\"error_code\":401,\"description\":\"Unauthorized\"}"))
+	w.WriteHeader(code)
+	fmt.Fprintf(w, "{\"ok\":false,\"error_code\":%d,\"description\":%s}", code, http.StatusText(code))
 }
 
-func (s *Server) notFoundHandler(w http.ResponseWriter, _ *http.Request) {
-	h := w.Header()
-	h.Del("Content-Length")
-	h.Set("Content-Type", "application/json")
-	h.Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(http.StatusNotFound)
-	w.Write([]byte("{\"ok\":false,\"error_code\":404,\"description\":\"Not Found\"}"))
-}
-
-func (s *Server) internalServerErrorHandler(w http.ResponseWriter, _ *http.Request, err error) {
+func (s *Server) internalServerErrorHandler(w http.ResponseWriter, err error) {
 	log.Println("Error:", err)
 	debug.PrintStack()
-
-	h := w.Header()
-	h.Del("Content-Length")
-	h.Set("Content-Type", "application/json")
-	h.Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(http.StatusInternalServerError)
-	w.Write([]byte("{\"ok\":false,\"error_code\":500,\"description\":\"Internal Server Error\"}"))
+	s.reportError(w, http.StatusInternalServerError)
 }
