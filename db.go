@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"iter"
+	"log"
 	"sync"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -122,7 +123,7 @@ func (tx *DatabaseTx) InsertMessage(messageJSON *gjson.Result) error {
 		Valid: messageThreadID.Exists(),
 	}
 	chatID := messageJSON.Get("chat.id").Int()
-	fmt.Println("Inserting", messageID, messageThreadIDSQL, chatID, messageJSON.Raw)
+	log.Println("Inserting message:", messageJSON)
 	_, err := tx.tx.Exec(
 		"INSERT OR REPLACE INTO messages (message_id, message_thread_id, chat_id, message) VALUES (?, ?, ?, jsonb(?));",
 		messageID, messageThreadIDSQL, chatID, messageJSON.Raw,
@@ -134,7 +135,7 @@ func (tx *DatabaseTx) InsertMessage(messageJSON *gjson.Result) error {
 }
 
 func (tx *DatabaseTx) InsertUpdate(upstreamID uint64, updateType string, updateValue string) error {
-	fmt.Println("Inserting", upstreamID, updateType, updateValue)
+	log.Printf("Inserting update %d: {\"%s\":%s}\n", upstreamID, updateType, updateValue)
 	_, err := tx.tx.Exec(
 		"INSERT OR REPLACE INTO updates (upstream_id, type, \"update\") VALUES (?, ?, jsonb(?));",
 		upstreamID, updateType, updateValue,
@@ -146,7 +147,7 @@ func (tx *DatabaseTx) InsertUpdate(upstreamID uint64, updateType string, updateV
 }
 
 func (tx *DatabaseTx) InsertLocalUpdate(updateType string, updateValue string) error {
-	fmt.Println("Inserting", updateType, updateValue)
+	log.Printf("Inserting local update: {\"%s\":%s}\n", updateType, updateValue)
 	_, err := tx.tx.Exec(
 		"INSERT OR REPLACE INTO updates (type, \"update\") VALUES (?, jsonb(?));",
 		updateType, updateValue,
