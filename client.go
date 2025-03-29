@@ -79,9 +79,15 @@ func (c *Client) StartPolling(ctx context.Context) error {
 	for {
 		var requestURL string
 		if offset == 0 {
-			requestURL = fmt.Sprintf("%s/getUpdates?timeout=%d&allowed_updates=%s", c.conf.Upstream.ApiPrefix, c.conf.Upstream.PollingTimeout, c.conf.Upstream.FilterUpdateTypesStr)
+			requestURL = fmt.Sprintf(
+				"%s/getUpdates?timeout=%d&allowed_updates=%s",
+				c.conf.Upstream.ApiPrefix, c.conf.Upstream.PollingTimeout, c.conf.Upstream.FilterUpdateTypesStr,
+			)
 		} else {
-			requestURL = fmt.Sprintf("%s/getUpdates?offset=%d&timeout=%d&allowed_updates=%s", c.conf.Upstream.ApiPrefix, offset, c.conf.Upstream.PollingTimeout, c.conf.Upstream.FilterUpdateTypesStr)
+			requestURL = fmt.Sprintf(
+				"%s/getUpdates?offset=%d&timeout=%d&allowed_updates=%s",
+				c.conf.Upstream.ApiPrefix, offset, c.conf.Upstream.PollingTimeout, c.conf.Upstream.FilterUpdateTypesStr,
+			)
 		}
 		log.Println("GET", requestURL)
 
@@ -92,7 +98,7 @@ func (c *Client) StartPolling(ctx context.Context) error {
 		req.Header.Set("User-Agent", UserAgent)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			// Assume this is not a fatal errors
+			// Assume this is not a fatal error
 			log.Println("Upstream HTTP request error:", err)
 			c.sleepUntilRetry()
 			continue
@@ -185,10 +191,8 @@ func (c *Client) ForwardRequest(ctx context.Context, w http.ResponseWriter, r *h
 		if chatID != 0 {
 			c.cooldownMutex.RLock()
 			cooldown := c.globalCooldown
-			if cd, ok := c.chatCooldown[chatID]; ok {
-				if cd.After(cooldown) {
-					cooldown = cd
-				}
+			if cd, ok := c.chatCooldown[chatID]; ok && cd.After(cooldown) {
+				cooldown = cd
 			}
 			c.cooldownMutex.RUnlock()
 			sleep := time.Until(cooldown)
