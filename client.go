@@ -14,6 +14,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+const UserAgent = "Mozilla/5.0 Telegram-bot-muxer/1.0 (+https://github.com/m13253/telegram-bot-muxer)"
+
 type Client struct {
 	conf                *Config
 	db                  *Database
@@ -80,7 +82,7 @@ func (c *Client) StartPolling(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("failed to send HTTP request: %v", err)
 		}
-		req.Header.Set("User-Agent", "Mozilla/5.0 Telegram-bot-muxer/1.0 (+https://github.com/m13253/telegram-bot-muxer)")
+		req.Header.Set("User-Agent", UserAgent)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			// Assume this is not a fatal errors
@@ -182,7 +184,7 @@ func (c *Client) ForwardAPI(ctx context.Context, w http.ResponseWriter, r *http.
 			req.Header[k] = v
 		}
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 Telegram-bot-muxer/1.0 (+https://github.com/m13253/telegram-bot-muxer)")
+	req.Header.Set("User-Agent", UserAgent)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("upstream HTTP request error: %v", err)
@@ -238,7 +240,7 @@ func (c *Client) ForwardFile(ctx context.Context, w http.ResponseWriter, r *http
 			req.Header[k] = v
 		}
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 Telegram-bot-muxer/1.0 (+https://github.com/m13253/telegram-bot-muxer)")
+	req.Header.Set("User-Agent", UserAgent)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("upstream HTTP request error: %v", err)
