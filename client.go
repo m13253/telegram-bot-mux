@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"runtime/debug"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/tidwall/gjson"
@@ -17,11 +18,14 @@ import (
 const UserAgent = "Mozilla/5.0 Telegram-bot-muxer/1.0 (+https://github.com/m13253/telegram-bot-muxer)"
 
 type Client struct {
-	conf                *Config
-	db                  *Database
-	typesNeedCaching    map[string]struct{}
-	echoProcessor       map[string]func(int64, []byte)
-	last_retry_interval time.Duration
+	conf              *Config
+	db                *Database
+	typesNeedCaching  map[string]struct{}
+	echoProcessor     map[string]func([]byte)
+	nextRetryInterval time.Duration
+	cooldownMutex     *sync.RWMutex
+	globalCooldown    time.Time
+	chatCooldown      map[int64]time.Time
 }
 
 func NewClient(conf *Config, db *Database) *Client {
@@ -36,9 +40,12 @@ func NewClient(conf *Config, db *Database) *Client {
 			"business_message":        {},
 			"edited_business_message": {},
 		},
-		last_retry_interval: time.Second,
+		nextRetryInterval: time.Second,
+		cooldownMutex:     new(sync.RWMutex),
+		globalCooldown:    time.Now(),
+		chatCooldown:      make(map[int64]time.Time),
 	}
-	c.echoProcessor = map[string]func(int64, []byte){
+	c.echoProcessor = map[string]func([]byte){
 		"sendMessage":             c.processEchoMessage,
 		"forwardMessage":          c.processEchoMessage,
 		"copyMessage":             c.processEchoMessage,
@@ -173,7 +180,27 @@ func (c *Client) ForwardRequest(ctx context.Context, w http.ResponseWriter, r *h
 	}
 	log.Println(r.Method, requestURL)
 
-	chatID, _ := strconv.ParseInt(r.FormValue("chat_id"), 10, 64)
+	if !isFile {
+		chatID, _ := strconv.ParseInt(r.FormValue("chat_id"), 10, 64)
+		if chatID != 0 {
+			c.cooldownMutex.RLock()
+			cooldown := c.globalCooldown
+			if cd, ok := c.chatCooldown[chatID]; ok {
+				if cd.After(cooldown) {
+					cooldown = cd
+				}
+			}
+			c.cooldownMutex.RUnlock()
+			sleep := time.Until(cooldown)
+			if sleep > 0 {
+				select {
+				case <-ctx.Done():
+					return context.Canceled
+				case <-time.After(sleep):
+				}
+			}
+		}
+	}
 
 	req, err := http.NewRequestWithContext(ctx, r.Method, requestURL, r.Body)
 	if err != nil {
@@ -200,8 +227,11 @@ func (c *Client) ForwardRequest(ctx context.Context, w http.ResponseWriter, r *h
 	w.WriteHeader(resp.StatusCode)
 	// Too late to report error, so ignore errors from here
 
-	echoProcessor := c.echoProcessor[suffix]
-	if echoProcessor == nil || isFile || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	var echoProcessor func([]byte)
+	if !isFile {
+		echoProcessor = c.echoProcessor[suffix]
+	}
+	if echoProcessor == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		_, err = io.Copy(w, resp.Body)
 		if err != nil {
 			debug.PrintStack()
@@ -218,20 +248,20 @@ func (c *Client) ForwardRequest(ctx context.Context, w http.ResponseWriter, r *h
 		return nil
 	}
 
-	echoProcessor(chatID, bodyCopy.Bytes())
+	echoProcessor(bodyCopy.Bytes())
 	return nil
 }
 
 func (c *Client) sleepUntilRetry() {
-	time.Sleep(c.last_retry_interval)
-	c.last_retry_interval = min(c.last_retry_interval*2, time.Duration(c.conf.Upstream.MaxRetryInterval)*time.Second)
+	time.Sleep(c.nextRetryInterval)
+	c.nextRetryInterval = min(c.nextRetryInterval*2, time.Duration(c.conf.Upstream.MaxRetryInterval)*time.Second)
 }
 
 func (c *Client) resetRetry() {
-	c.last_retry_interval = time.Second
+	c.nextRetryInterval = time.Second
 }
 
-func (c *Client) processEchoMessage(_ int64, body []byte) {
+func (c *Client) processEchoMessage(body []byte) {
 	bodyJson := gjson.ParseBytes(body)
 	if bodyJson.Get("ok").Type != gjson.True {
 		errorCode := bodyJson.Get("error_code").String()
@@ -241,6 +271,7 @@ func (c *Client) processEchoMessage(_ int64, body []byte) {
 	}
 
 	message := bodyJson.Get("result")
+	c.updateRateLimit(&message)
 	tx, err := c.db.BeginTx()
 	if err != nil {
 		log.Println("Failed to store updates:", err)
@@ -260,7 +291,7 @@ func (c *Client) processEchoMessage(_ int64, body []byte) {
 	c.db.NotifyUpdates()
 }
 
-func (c *Client) processEchoMessageEdit(_ int64, body []byte) {
+func (c *Client) processEchoMessageEdit(body []byte) {
 	bodyJson := gjson.ParseBytes(body)
 	if bodyJson.Get("ok").Type != gjson.True {
 		errorCode := bodyJson.Get("error_code").String()
@@ -292,7 +323,7 @@ func (c *Client) processEchoMessageEdit(_ int64, body []byte) {
 	c.db.NotifyUpdates()
 }
 
-func (c *Client) processEchoMessageArray(_ int64, body []byte) {
+func (c *Client) processEchoMessageArray(body []byte) {
 	bodyJson := gjson.ParseBytes(body)
 	if bodyJson.Get("ok").Type != gjson.True {
 		errorCode := bodyJson.Get("error_code").String()
@@ -306,6 +337,7 @@ func (c *Client) processEchoMessageArray(_ int64, body []byte) {
 		log.Println("Failed to store updates:", err)
 	}
 	bodyJson.Get("result").ForEach(func(_, message gjson.Result) bool {
+		c.updateRateLimit(&message)
 		err := tx.InsertMessage(&message)
 		if err != nil {
 			log.Println("Failed to store updates:", err)
@@ -321,4 +353,25 @@ func (c *Client) processEchoMessageArray(_ int64, body []byte) {
 		log.Println("Failed to store updates:", err)
 	}
 	c.db.NotifyUpdates()
+}
+
+func (c *Client) updateRateLimit(message *gjson.Result) {
+	// https://core.telegram.org/bots/faq#my-bot-is-hitting-limits-how-do-i-avoid-this
+
+	now := time.Now()
+	c.cooldownMutex.Lock()
+	c.globalCooldown = now.Add(time.Second/30 + 1)
+
+	chatID := message.Get("chat.id").Int()
+	if chatID == 0 {
+		c.cooldownMutex.Unlock()
+		return
+	}
+	chatType := message.Get("chat.type").String()
+	if chatType == "private" {
+		c.chatCooldown[chatID] = now.Add(time.Second)
+	} else {
+		c.chatCooldown[chatID] = now.Add(3 * time.Second)
+	}
+	c.cooldownMutex.Unlock()
 }
