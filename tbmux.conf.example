@@ -9,7 +9,7 @@ max_retry_interval = 600
 filter_update_types = []
 
 [downstream]
-listen_addr = "[::]:8080"
+listen_addr = "localhost:8080"
 api_path = "/bot"
 file_path = "/file/bot"
 auth_token = "123456:AnotherToken"
