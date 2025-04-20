@@ -60,7 +60,7 @@ $ ./telegram-bot-mux --conf tbmux.conf
 
 Alternatively, you can create a systemd unit to run telegram-bot-mux:
 ```bash
-$ cat <<EOF | sudo tee ~/.config/systemd/user/telegram-bot-mux.service
+$ cat >~/.config/systemd/user/telegram-bot-mux.service <<EOF
 [Unit]
 Description=telegram-bot-mux
 After=network.target
