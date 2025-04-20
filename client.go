@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"runtime/debug"
 	"strconv"
@@ -15,24 +17,22 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-const UserAgent = "Mozilla/5.0 Telegram-bot-muxer/1.0 (+https://github.com/m13253/telegram-bot-muxer)"
-
 type Client struct {
-	conf              *Config
-	db                *Database
-	typesNeedCaching  map[string]struct{}
-	echoProcessor     map[string]func([]byte)
-	nextRetryInterval time.Duration
-	cooldownMutex     *sync.RWMutex
-	globalCooldown    time.Time
-	chatCooldown      map[int64]time.Time
+	conf                *Config
+	db                  *Database
+	updateTypeIsMessage map[string]struct{}
+	echoUpdateType      map[string]string
+	nextRetryInterval   time.Duration
+	cooldownMutex       *sync.Mutex
+	globalCooldown      time.Time
+	chatCooldown        map[int64]time.Time
 }
 
 func NewClient(conf *Config, db *Database) *Client {
 	c := &Client{
 		conf: conf,
 		db:   db,
-		typesNeedCaching: map[string]struct{}{
+		updateTypeIsMessage: map[string]struct{}{
 			"message":                 {},
 			"edited_message":          {},
 			"channel_post":            {},
@@ -41,34 +41,33 @@ func NewClient(conf *Config, db *Database) *Client {
 			"edited_business_message": {},
 		},
 		nextRetryInterval: time.Second,
-		cooldownMutex:     new(sync.RWMutex),
+		cooldownMutex:     new(sync.Mutex),
 		globalCooldown:    time.Now(),
 		chatCooldown:      make(map[int64]time.Time),
 	}
-	c.echoProcessor = map[string]func([]byte){
-		"sendMessage":             c.processEchoMessage,
-		"forwardMessage":          c.processEchoMessage,
-		"copyMessage":             c.processEchoMessage,
-		"sendPhoto":               c.processEchoMessage,
-		"sendAudio":               c.processEchoMessage,
-		"sendDocument":            c.processEchoMessage,
-		"sendVideo":               c.processEchoMessage,
-		"sendAnimation":           c.processEchoMessage,
-		"sendVoice":               c.processEchoMessage,
-		"sendVideoNote":           c.processEchoMessage,
-		"sendPaidMedia":           c.processEchoMessage,
-		"sendMediaGroup":          c.processEchoMessageArray,
-		"sendLocation":            c.processEchoMessage,
-		"sendVenue":               c.processEchoMessage,
-		"sendContact":             c.processEchoMessage,
-		"sendPoll":                c.processEchoMessage,
-		"sendDice":                c.processEchoMessage,
-		"editMessageText":         c.processEchoMessageEdit,
-		"editMessageCaption":      c.processEchoMessageEdit,
-		"editMessageMedia":        c.processEchoMessageEdit,
-		"editMessageLiveLocation": c.processEchoMessageEdit,
-		"stopMessageLiveLocation": c.processEchoMessageEdit,
-		"editMessageReplyMarkup":  c.processEchoMessageEdit,
+	c.echoUpdateType = map[string]string{
+		"sendMessage":             "message",
+		"forwardMessage":          "message",
+		"sendPhoto":               "message",
+		"sendAudio":               "message",
+		"sendDocument":            "message",
+		"sendVideo":               "message",
+		"sendAnimation":           "message",
+		"sendVoice":               "message",
+		"sendVideoNote":           "message",
+		"sendPaidMedia":           "message",
+		"sendMediaGroup":          "message",
+		"sendLocation":            "message",
+		"sendVenue":               "message",
+		"sendContact":             "message",
+		"sendPoll":                "message",
+		"sendDice":                "message",
+		"editMessageText":         "edited_message",
+		"editMessageCaption":      "edited_message",
+		"editMessageMedia":        "edited_message",
+		"editMessageLiveLocation": "edited_message",
+		"stopMessageLiveLocation": "edited_message",
+		"editMessageReplyMarkup":  "edited_message",
 	}
 	return c
 }
@@ -89,13 +88,14 @@ func (c *Client) StartPolling(ctx context.Context) error {
 				c.conf.Upstream.ApiPrefix, offset, c.conf.Upstream.PollingTimeout, c.conf.Upstream.FilterUpdateTypesStr,
 			)
 		}
-		log.Println("GET", requestURL)
+		log.Println("> GET", requestURL)
 
 		req, err := http.NewRequestWithContext(ctx, "GET", requestURL, nil)
 		if err != nil {
+			debug.PrintStack()
 			return fmt.Errorf("failed to send HTTP request: %v", err)
 		}
-		req.Header.Set("User-Agent", UserAgent)
+		req.Header.Set("User-Agent", httpUserAgent)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			// Assume this is not a fatal error
@@ -118,8 +118,10 @@ func (c *Client) StartPolling(ctx context.Context) error {
 			continue
 		}
 
+		// Let's trust the server won't send us something ridiculously big
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
+			debug.PrintStack()
 			log.Println("HTTP read error:", err)
 			c.sleepUntilRetry()
 			continue
@@ -129,6 +131,7 @@ func (c *Client) StartPolling(ctx context.Context) error {
 		if bodyJson.Get("ok").Type != gjson.True {
 			errorCode := bodyJson.Get("error_code").String()
 			errorDesc := bodyJson.Get("description").String()
+			debug.PrintStack()
 			log.Println("Upstream error:", errorCode, errorDesc)
 			c.sleepUntilRetry()
 			continue
@@ -136,6 +139,7 @@ func (c *Client) StartPolling(ctx context.Context) error {
 
 		tx, err := c.db.BeginTx()
 		if err != nil {
+			debug.PrintStack()
 			log.Println("Failed to store updates:", err)
 			c.sleepUntilRetry()
 			continue
@@ -145,29 +149,33 @@ func (c *Client) StartPolling(ctx context.Context) error {
 			offset = max(offset, upstreamID+1)
 			update.ForEach(func(updateType, updateValue gjson.Result) bool {
 				if updateType.Str == "update_id" {
+					// Skip
 					return true
 				}
-				if _, ok := c.typesNeedCaching[updateType.Str]; ok {
+				err = tx.InsertUpdate(upstreamID, updateType.String(), updateValue.Raw)
+				if err != nil {
+					return false
+				}
+				if _, ok := c.updateTypeIsMessage[updateType.Str]; ok {
 					err = tx.InsertMessage(&updateValue)
 					if err != nil {
 						return false
 					}
 				}
-				err = tx.InsertUpdate(upstreamID, updateType.String(), updateValue.Raw)
-				return err == nil
+				return true
 			})
 			return err == nil
 		})
 		if err != nil {
 			tx.Commit()
-			c.db.NotifyUpdates()
+			debug.PrintStack()
 			log.Println("Failed to store updates:", err)
 			c.sleepUntilRetry()
 			continue
 		}
 		err = tx.Commit()
-		c.db.NotifyUpdates()
 		if err != nil {
+			debug.PrintStack()
 			log.Println("Failed to store updates:", err)
 			c.sleepUntilRetry()
 			continue
@@ -177,36 +185,41 @@ func (c *Client) StartPolling(ctx context.Context) error {
 	}
 }
 
-func (c *Client) ForwardRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, prefix string, suffix string, isFile bool) error {
+func (c *Client) ForwardRequest(ctx context.Context, s *Server, w http.ResponseWriter, r *http.Request, isFileRequest bool, urlSuffix string, bodyCopy io.ReadCloser) error {
+	var urlPrefix string
+	if isFileRequest {
+		urlPrefix = c.conf.Upstream.FilePrefix
+	} else {
+		urlPrefix = c.conf.Upstream.ApiPrefix
+	}
 	var requestURL string
 	if len(r.URL.RawQuery) == 0 {
-		requestURL = fmt.Sprintf("%s/%s", prefix, suffix)
+		requestURL = fmt.Sprintf("%s/%s", urlPrefix, urlSuffix)
 	} else {
-		requestURL = fmt.Sprintf("%s/%s?%s", prefix, suffix, r.URL.RawQuery)
+		requestURL = fmt.Sprintf("%s/%s?%s", urlPrefix, urlSuffix, r.URL.RawQuery)
 	}
-	log.Println(r.Method, requestURL)
+	log.Println(">", r.Method, requestURL)
 
-	if !isFile {
-		chatID, _ := strconv.ParseInt(r.FormValue("chat_id"), 10, 64)
-		if chatID != 0 {
-			c.cooldownMutex.RLock()
-			cooldown := c.globalCooldown
-			if cd, ok := c.chatCooldown[chatID]; ok && cd.After(cooldown) {
-				cooldown = cd
-			}
-			c.cooldownMutex.RUnlock()
-			sleep := time.Until(cooldown)
-			if sleep > 0 {
-				select {
-				case <-ctx.Done():
-					return context.Canceled
-				case <-time.After(sleep):
-				}
-			}
+	if !isFileRequest {
+		params := struct {
+			ChatID int64 `json:"chat_id"`
+		}{}
+		_ = r.ParseForm()
+		params.ChatID, _ = strconv.ParseInt(r.Form.Get("chat_id"), 10, 64)
+
+		ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if ct == "application/json" {
+			_ = json.NewDecoder(io.LimitReader(r.Body, httpBodyLimit+1)).Decode(&params)
+		}
+
+		err := c.waitForCooldown(ctx, params.ChatID)
+		if err != nil {
+			debug.PrintStack()
+			return err
 		}
 	}
 
-	req, err := http.NewRequestWithContext(ctx, r.Method, requestURL, r.Body)
+	req, err := http.NewRequestWithContext(ctx, r.Method, requestURL, bodyCopy)
 	if err != nil {
 		return fmt.Errorf("failed to send HTTP request: %v", err)
 	}
@@ -215,7 +228,7 @@ func (c *Client) ForwardRequest(ctx context.Context, w http.ResponseWriter, r *h
 			req.Header[k] = v
 		}
 	}
-	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("User-Agent", httpUserAgent)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("upstream HTTP request error: %v", err)
@@ -231,11 +244,11 @@ func (c *Client) ForwardRequest(ctx context.Context, w http.ResponseWriter, r *h
 	w.WriteHeader(resp.StatusCode)
 	// Too late to report error, so ignore errors from here
 
-	var echoProcessor func([]byte)
-	if !isFile {
-		echoProcessor = c.echoProcessor[suffix]
+	var echoUpdateType string
+	if !isFileRequest {
+		echoUpdateType = c.echoUpdateType[urlSuffix]
 	}
-	if echoProcessor == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if echoUpdateType == "" || resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		_, err = io.Copy(w, resp.Body)
 		if err != nil {
 			debug.PrintStack()
@@ -244,15 +257,14 @@ func (c *Client) ForwardRequest(ctx context.Context, w http.ResponseWriter, r *h
 		return nil
 	}
 
-	var bodyCopy bytes.Buffer
-	_, err = io.Copy(w, io.TeeReader(resp.Body, &bodyCopy))
+	var respBodyCopy bytes.Buffer
+	_, err = io.Copy(w, io.TeeReader(resp.Body, &respBodyCopy))
 	if err != nil {
 		debug.PrintStack()
 		log.Println("HTTP error:", err)
 		return nil
 	}
-
-	echoProcessor(bodyCopy.Bytes())
+	c.processEchoMessage(echoUpdateType, respBodyCopy.Bytes())
 	return nil
 }
 
@@ -265,69 +277,7 @@ func (c *Client) resetRetry() {
 	c.nextRetryInterval = time.Second
 }
 
-func (c *Client) processEchoMessage(body []byte) {
-	bodyJson := gjson.ParseBytes(body)
-	if bodyJson.Get("ok").Type != gjson.True {
-		errorCode := bodyJson.Get("error_code").String()
-		errorDesc := bodyJson.Get("description").String()
-		log.Println("Upstream error:", errorCode, errorDesc)
-		return
-	}
-
-	message := bodyJson.Get("result")
-	c.updateRateLimit(&message)
-	tx, err := c.db.BeginTx()
-	if err != nil {
-		log.Println("Failed to store updates:", err)
-	}
-	err = tx.InsertMessage(&message)
-	if err != nil {
-		log.Println("Failed to store updates:", err)
-	}
-	err = tx.InsertLocalUpdate("message", message.Raw)
-	if err != nil {
-		log.Println("Failed to store updates:", err)
-	}
-	err = tx.Commit()
-	if err != nil {
-		log.Println("Failed to store updates:", err)
-	}
-	c.db.NotifyUpdates()
-}
-
-func (c *Client) processEchoMessageEdit(body []byte) {
-	bodyJson := gjson.ParseBytes(body)
-	if bodyJson.Get("ok").Type != gjson.True {
-		errorCode := bodyJson.Get("error_code").String()
-		errorDesc := bodyJson.Get("description").String()
-		log.Println("Upstream error:", errorCode, errorDesc)
-		return
-	}
-
-	message := bodyJson.Get("result")
-	if message.Type == gjson.True {
-		return
-	}
-	tx, err := c.db.BeginTx()
-	if err != nil {
-		log.Println("Failed to store updates:", err)
-	}
-	err = tx.InsertMessage(&message)
-	if err != nil {
-		log.Println("Failed to store updates:", err)
-	}
-	err = tx.InsertLocalUpdate("edited_message", message.Raw)
-	if err != nil {
-		log.Println("Failed to store updates:", err)
-	}
-	err = tx.Commit()
-	if err != nil {
-		log.Println("Failed to store updates:", err)
-	}
-	c.db.NotifyUpdates()
-}
-
-func (c *Client) processEchoMessageArray(body []byte) {
+func (c *Client) processEchoMessage(updateType string, body []byte) {
 	bodyJson := gjson.ParseBytes(body)
 	if bodyJson.Get("ok").Type != gjson.True {
 		errorCode := bodyJson.Get("error_code").String()
@@ -340,42 +290,79 @@ func (c *Client) processEchoMessageArray(body []byte) {
 	if err != nil {
 		log.Println("Failed to store updates:", err)
 	}
-	bodyJson.Get("result").ForEach(func(_, message gjson.Result) bool {
-		c.updateRateLimit(&message)
-		err := tx.InsertMessage(&message)
+	result := bodyJson.Get("result")
+	cb := func(_, message gjson.Result) bool {
+		err := tx.InsertLocalUpdate(updateType, message.Raw)
 		if err != nil {
+			debug.PrintStack()
 			log.Println("Failed to store updates:", err)
 		}
-		err = tx.InsertLocalUpdate("message", message.Raw)
+		err = tx.InsertMessage(&message)
 		if err != nil {
+			debug.PrintStack()
 			log.Println("Failed to store updates:", err)
 		}
 		return true
-	})
+	}
+	if result.IsArray() {
+		result.ForEach(cb)
+	} else {
+		cb(gjson.Result{}, result)
+	}
 	err = tx.Commit()
 	if err != nil {
+		debug.PrintStack()
 		log.Println("Failed to store updates:", err)
 	}
-	c.db.NotifyUpdates()
 }
 
-func (c *Client) updateRateLimit(message *gjson.Result) {
+func (c *Client) waitForCooldown(ctx context.Context, chatID int64) error {
 	// https://core.telegram.org/bots/faq#my-bot-is-hitting-limits-how-do-i-avoid-this
+	// Global cooldown is 1/30 sec
+	// Private chat cooldown is 1 sec
+	// Non-private chat cooldown is 3 sec
+
+	const (
+		global     = time.Second/30 + 1
+		private    = time.Second
+		nonPrivate = 3 * time.Second
+	)
+
+	log.Println("ChatID:", chatID)
+	if chatID == 0 {
+		return nil
+	}
 
 	now := time.Now()
-	c.cooldownMutex.Lock()
-	c.globalCooldown = now.Add(time.Second/30 + 1)
-
-	chatID := message.Get("chat.id").Int()
-	if chatID == 0 {
-		c.cooldownMutex.Unlock()
-		return
+	chatType, err := c.db.GetChatType(ctx, chatID)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve chat information: %v", err)
 	}
-	chatType := message.Get("chat.type").String()
+
+	c.cooldownMutex.Lock()
+	until := c.globalCooldown
+	if cd, ok := c.chatCooldown[chatID]; ok {
+		if cd.After(until) {
+			until = cd
+		}
+	}
+	if until.Before(now) {
+		until = now
+	}
+	c.globalCooldown = until.Add(global)
 	if chatType == "private" {
-		c.chatCooldown[chatID] = now.Add(time.Second)
+		c.chatCooldown[chatID] = until.Add(private)
 	} else {
-		c.chatCooldown[chatID] = now.Add(3 * time.Second)
+		c.chatCooldown[chatID] = until.Add(nonPrivate)
 	}
 	c.cooldownMutex.Unlock()
+
+	dur := time.Until(until)
+	if dur > 0 {
+		select {
+		case <-time.After(time.Until(until)):
+		case <-ctx.Done():
+		}
+	}
+	return nil
 }

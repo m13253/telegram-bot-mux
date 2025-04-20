@@ -20,7 +20,9 @@ type Database struct {
 }
 
 type DatabaseTx struct {
-	tx *sql.Tx
+	db      *Database
+	tx      *sql.Tx
+	updated bool
 }
 
 func OpenDatabase(conf *Config) (*Database, error) {
@@ -30,8 +32,10 @@ func OpenDatabase(conf *Config) (*Database, error) {
 	}
 	_, err = conn.Exec(
 		"BEGIN;" +
-			"CREATE TABLE IF NOT EXISTS updates (id INTEGER PRIMARY KEY, upstream_id INTEGER UNIQUE, type TEXT NOT NULL, \"update\" JSONB NOT NULL);" +
+			"CREATE TABLE IF NOT EXISTS chats (id INTEGER PRIMARY KEY, type TEXT NOT NULL);" +
 			"CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, message_id INTEGER NOT NULL, message_thread_id INTEGER, chat_id INTEGER NOT NULL, message JSONB NOT NULL);" +
+			"CREATE TABLE IF NOT EXISTS updates (id INTEGER PRIMARY KEY, upstream_id INTEGER UNIQUE, type TEXT NOT NULL, \"update\" JSONB NOT NULL);" +
+			"CREATE INDEX IF NOT EXISTS idx_message_chat_id ON messages (chat_id, message_thread_id, message_id);" +
 			"COMMIT;")
 	if err != nil {
 		return nil, fmt.Errorf("failed to write to database: %v", err)
@@ -43,7 +47,7 @@ func OpenDatabase(conf *Config) (*Database, error) {
 	}, nil
 }
 
-func (d *Database) SubscribeNextUpdate() (<-chan struct{}, func()) {
+func (d *Database) SubscribeNextUpdate() (notify <-chan struct{}, cancel func()) {
 	c := make(chan struct{})
 	d.updateMutex.Lock()
 	token := d.nextCancelToken
@@ -72,7 +76,7 @@ func (d *Database) GetUpdates(ctx context.Context, offset int64, limit uint64) i
 	if offset > 0 {
 		rows, err = d.conn.QueryContext(ctx, "SELECT id, type, json(\"update\") FROM updates WHERE id >= ? ORDER BY id ASC LIMIT ?;", offset, limit)
 	} else {
-		rows, err = d.conn.QueryContext(ctx, "SELECT id, type, json(\"update\") FROM (SELECT * FROM updates ORDER BY id DESC LIMIT ?) ORDER BY id ASC LIMIT ?;", -offset, limit)
+		rows, err = d.conn.QueryContext(ctx, "SELECT id, type, json(\"update\") FROM (SELECT id, type, \"update\" FROM updates ORDER BY id DESC LIMIT ?) ORDER BY id ASC LIMIT ?;", -offset, limit)
 	}
 	if err != nil {
 		return func(yield func(string, error) bool) {
@@ -90,7 +94,7 @@ func (d *Database) GetUpdates(ctx context.Context, offset int64, limit uint64) i
 				return
 			}
 
-			updateJSON := fmt.Sprintf("{\"update_id\":%d,%s:%s}", id, JSONQuote(updateType), updateValue)
+			updateJSON := fmt.Sprintf("{\"update_id\":%d,%s:%s}", id, quoteJSON(updateType), updateValue)
 			if !yield(updateJSON, nil) {
 				rows.Close()
 				return
@@ -104,15 +108,53 @@ func (d *Database) GetUpdates(ctx context.Context, offset int64, limit uint64) i
 	}
 }
 
+func (d *Database) GetChatType(ctx context.Context, chatID int64) (string, error) {
+	var chatType string
+	err := d.conn.QueryRowContext(ctx, "SELECT type FROM chats WHERE id = ?;", chatID).Scan(&chatType)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", fmt.Errorf("database error: %v", err)
+	}
+	return chatType, nil
+}
+
 func (d *Database) BeginTx() (DatabaseTx, error) {
-	var tx DatabaseTx
+	tx := DatabaseTx{
+		db:      d,
+		tx:      nil,
+		updated: false,
+	}
 	var err error
 	tx.tx, err = d.conn.Begin()
 	return tx, err
 }
 
-func (tx *DatabaseTx) Commit() error {
-	return tx.tx.Commit()
+func (tx *DatabaseTx) InsertUpdate(upstreamID uint64, updateType, updateValue string) error {
+	log.Printf("Inserting update %d: {\"%s\":%s}\n", upstreamID, updateType, updateValue)
+	result, err := tx.tx.Exec(
+		"INSERT OR REPLACE INTO updates (upstream_id, type, \"update\") VALUES (?, ?, jsonb(?));",
+		upstreamID, updateType, updateValue,
+	)
+	if err != nil {
+		return fmt.Errorf("database error: %v", err)
+	}
+	tx.setUpdated(result)
+	return nil
+}
+
+func (tx *DatabaseTx) InsertLocalUpdate(updateType, updateValue string) error {
+	log.Printf("Inserting local update: {\"%s\":%s}\n", updateType, updateValue)
+	result, err := tx.tx.Exec(
+		"INSERT OR REPLACE INTO updates (type, \"update\") VALUES (?, jsonb(?));",
+		updateType, updateValue,
+	)
+	if err != nil {
+		return fmt.Errorf("database error: %v", err)
+	}
+	tx.setUpdated(result)
+	return nil
 }
 
 func (tx *DatabaseTx) InsertMessage(messageJSON *gjson.Result) error {
@@ -123,49 +165,29 @@ func (tx *DatabaseTx) InsertMessage(messageJSON *gjson.Result) error {
 		Valid: messageThreadID.Exists(),
 	}
 	chatID := messageJSON.Get("chat.id").Int()
+	chatType := messageJSON.Get("chat.type").String()
 	log.Println("Inserting message:", messageJSON)
-	_, err := tx.tx.Exec(
-		"INSERT OR REPLACE INTO messages (message_id, message_thread_id, chat_id, message) VALUES (?, ?, ?, jsonb(?));",
-		messageID, messageThreadIDSQL, chatID, messageJSON.Raw,
+	result, err := tx.tx.Exec(
+		"INSERT OR REPLACE INTO chats (id, type) VALUES (?, ?);"+
+			"INSERT OR REPLACE INTO messages (message_id, message_thread_id, chat_id, message) VALUES (?, ?, ?, jsonb(?));",
+		chatID, chatType, messageID, messageThreadIDSQL, chatID, messageJSON.Raw,
 	)
 	if err != nil {
 		return fmt.Errorf("database error: %v", err)
 	}
+	tx.setUpdated(result)
 	return nil
 }
 
-func (tx *DatabaseTx) InsertUpdate(upstreamID uint64, updateType string, updateValue string) error {
-	log.Printf("Inserting update %d: {\"%s\":%s}\n", upstreamID, updateType, updateValue)
-	_, err := tx.tx.Exec(
-		"INSERT OR REPLACE INTO updates (upstream_id, type, \"update\") VALUES (?, ?, jsonb(?));",
-		upstreamID, updateType, updateValue,
-	)
-	if err != nil {
-		return fmt.Errorf("database error: %v", err)
-	}
-	return nil
+func (tx *DatabaseTx) setUpdated(result sql.Result) {
+	rows, err := result.RowsAffected()
+	tx.updated = tx.updated || (err == nil && rows != 0)
 }
 
-func (tx *DatabaseTx) InsertLocalUpdate(updateType string, updateValue string) error {
-	log.Printf("Inserting local update: {\"%s\":%s}\n", updateType, updateValue)
-	_, err := tx.tx.Exec(
-		"INSERT OR REPLACE INTO updates (type, \"update\") VALUES (?, jsonb(?));",
-		updateType, updateValue,
-	)
-	if err != nil {
-		return fmt.Errorf("database error: %v", err)
+func (tx *DatabaseTx) Commit() error {
+	err := tx.tx.Commit()
+	if tx.updated {
+		tx.db.NotifyUpdates()
 	}
-	return nil
-}
-
-func (tx *DatabaseTx) InsertLocalUpdateByID(messageID int64, chatID int64) error {
-	fmt.Println("Inserting update by message ID", messageID, chatID)
-	_, err := tx.tx.Exec(
-		"INSERT OR REPLACE INTO updates (type, \"update\") SELECT ('message', message) FROM messages WHERE message_id = ? AND chat_id = ?;",
-		messageID, chatID,
-	)
-	if err != nil {
-		return fmt.Errorf("database error: %v", err)
-	}
-	return nil
+	return err
 }

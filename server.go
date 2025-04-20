@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -51,105 +54,91 @@ func (s *Server) Serve() error {
 	return err
 }
 
-func (s *Server) matchApiUrl(r *http.Request) (string, int) {
-	prefixSegCount := len(s.conf.Downstream.ApiPrefix)
-	path := strings.SplitN(r.URL.EscapedPath(), "/", prefixSegCount+1)
-	for i := range prefixSegCount {
-		if i >= len(path) {
-			return "", http.StatusNotFound
-		} else if i == prefixSegCount-1 {
-			seg, err := url.PathUnescape(path[i])
-			if err != nil || !strings.HasPrefix(seg, s.conf.Downstream.ApiPrefix[i]) {
-				return "", http.StatusNotFound
-			}
-			if seg != s.conf.Downstream.ApiPrefix[i]+s.conf.Downstream.AuthToken {
-				return "", http.StatusUnauthorized
-			}
-		} else {
-			seg, err := url.PathUnescape(path[i])
-			if err != nil || seg != s.conf.Downstream.ApiPrefix[i] {
-				return "", http.StatusNotFound
-			}
-		}
-	}
-	if len(path) != prefixSegCount+1 {
-		return "", http.StatusNotFound
-	}
-	return path[prefixSegCount], http.StatusOK
-}
-
-func (s *Server) matchFileUrl(r *http.Request) (string, int) {
-	prefixSegCount := len(s.conf.Downstream.FilePrefix)
-	path := strings.SplitN(r.URL.EscapedPath(), "/", prefixSegCount+1)
-	for i := range prefixSegCount {
-		if i >= len(path) {
-			return "", http.StatusNotFound
-		} else if i == prefixSegCount-1 {
-			seg, err := url.PathUnescape(path[i])
-			if err != nil || !strings.HasPrefix(seg, s.conf.Downstream.FilePrefix[i]) {
-				return "", http.StatusNotFound
-			}
-			if seg != s.conf.Downstream.FilePrefix[i]+s.conf.Downstream.AuthToken {
-				return "", http.StatusUnauthorized
-			}
-		} else {
-			seg, err := url.PathUnescape(path[i])
-			if err != nil || seg != s.conf.Downstream.FilePrefix[i] {
-				return "", http.StatusNotFound
-			}
-		}
-	}
-	if len(path) != prefixSegCount+1 {
-		return "", http.StatusNotFound
-	}
-	return path[prefixSegCount], http.StatusOK
-}
-
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	method, code := s.matchApiUrl(r)
+	funcName, code := s.matchPrefix(r, s.c.conf.Downstream.ApiPrefix)
 	if code != http.StatusNotFound {
 		if code != http.StatusOK {
-			s.reportError(w, code)
-			return
-		}
-		if method == "getUpdates" {
+			s.ReportError(w, code)
+		} else if funcName == "getUpdates" {
 			s.getUpdates(w, r)
-			return
+		} else {
+			s.forwardAPI(w, r, funcName)
 		}
-		s.forwardAPI(w, r, method)
 		return
 	}
-	fileID, code := s.matchFileUrl(r)
+	fileID, code := s.matchPrefix(r, s.c.conf.Downstream.FilePrefix)
 	if code != http.StatusNotFound {
 		if code != http.StatusOK {
-			s.reportError(w, code)
-			return
+			s.ReportError(w, code)
+		} else {
+			s.forwardFileRequest(w, r, fileID)
 		}
-		s.forwardFile(w, r, fileID)
 		return
 	}
-	s.reportError(w, code)
+	s.ReportError(w, http.StatusNotFound)
+}
+
+func (s *Server) matchPrefix(r *http.Request, prefix []string) (string, int) {
+	prefixSegCount := len(prefix)
+	path := strings.SplitN(r.URL.EscapedPath(), "/", prefixSegCount+1)
+	for i := range prefixSegCount {
+		if i >= len(path) {
+			return "", http.StatusNotFound
+		} else if i == prefixSegCount-1 {
+			seg, err := url.PathUnescape(path[i])
+			if err != nil || !strings.HasPrefix(seg, prefix[i]) {
+				return "", http.StatusNotFound
+			}
+			if seg != prefix[i]+s.conf.Downstream.AuthToken {
+				return "", http.StatusUnauthorized
+			}
+		} else {
+			seg, err := url.PathUnescape(path[i])
+			if err != nil || seg != prefix[i] {
+				return "", http.StatusNotFound
+			}
+		}
+	}
+	if len(path) != prefixSegCount+1 {
+		return "", http.StatusNotFound
+	}
+	return path[prefixSegCount], http.StatusOK
 }
 
 func (s *Server) getUpdates(w http.ResponseWriter, r *http.Request) {
-	// It seems the official API server ignores errors
-	_ = r.ParseMultipartForm(10 << 20)
-	offset, _ := strconv.ParseInt(r.FormValue("offset"), 10, 64)
-	limit, _ := strconv.ParseUint(r.FormValue("limit"), 10, 64)
-	timeout, _ := strconv.ParseUint(r.FormValue("timeout"), 10, 64)
+	params := struct {
+		Offset  int64  `json:"offset"`
+		Limit   uint64 `json:"limit"`
+		Timeout uint64 `json:"timeout"`
+	}{}
 
-	if offset == 0 {
-		offset = -1
-	}
-	if limit == 0 || limit > 100 {
-		limit = 100
-	}
-	timer := time.After(time.Duration(timeout) * time.Second)
+	// Fetch request parameters. Ignore errors, just like the official API server
+	params.Offset, _ = strconv.ParseInt(r.FormValue("offset"), 10, 64)
+	params.Limit, _ = strconv.ParseUint(r.FormValue("limit"), 10, 64)
+	params.Timeout, _ = strconv.ParseUint(r.FormValue("timeout"), 10, 64)
 
+	// Alternatively, Telegram Bot API supports submitting request through JSON
+	ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if ct == "application/json" {
+		_ = json.NewDecoder(r.Body).Decode(&params)
+	}
+
+	// Limit parameter range
+	if params.Offset == 0 {
+		params.Offset = -1
+	}
+	if params.Limit == 0 || params.Limit > 100 {
+		params.Limit = 100
+	}
+	if params.Timeout <= 0 {
+		params.Timeout = 0
+	}
+
+	timer := time.After(time.Duration(params.Timeout) * time.Second)
 	for {
 		update, cancel := s.db.SubscribeNextUpdate()
 		updatesReceived := false
-		for updateJSON, err := range s.db.GetUpdates(r.Context(), offset, limit) {
+		for updateJSON, err := range s.db.GetUpdates(r.Context(), params.Offset, params.Limit) {
 			if err != nil {
 				cancel()
 				s.internalServerErrorHandler(w, err)
@@ -185,23 +174,24 @@ func (s *Server) getUpdates(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) forwardAPI(w http.ResponseWriter, r *http.Request, method string) {
-	err := s.c.ForwardRequest(r.Context(), w, r, s.conf.Upstream.ApiPrefix, method, false)
+func (s *Server) forwardAPI(w http.ResponseWriter, r *http.Request, funcName string) {
+	var bodyCopy io.ReadCloser
+	r.Body, bodyCopy = NewPreserveBodyReader(r.Body)
+
+	err := s.c.ForwardRequest(r.Context(), s, w, r, false, funcName, bodyCopy)
 	if err != nil {
-		log.Println("API forward error:", err)
-		s.reportError(w, http.StatusBadGateway)
+		s.internalServerErrorHandler(w, err)
 	}
 }
 
-func (s *Server) forwardFile(w http.ResponseWriter, r *http.Request, fileID string) {
-	err := s.c.ForwardRequest(r.Context(), w, r, s.conf.Upstream.FilePrefix, fileID, true)
+func (s *Server) forwardFileRequest(w http.ResponseWriter, r *http.Request, fileID string) {
+	err := s.c.ForwardRequest(r.Context(), s, w, r, true, fileID, r.Body)
 	if err != nil {
-		log.Println("File forward error:", err)
-		s.reportError(w, http.StatusBadGateway)
+		s.internalServerErrorHandler(w, err)
 	}
 }
 
-func (s *Server) reportError(w http.ResponseWriter, code int) {
+func (s *Server) ReportError(w http.ResponseWriter, code int) {
 	h := w.Header()
 	h.Del("Content-Length")
 	h.Set("Content-Type", "application/json")
@@ -211,7 +201,7 @@ func (s *Server) reportError(w http.ResponseWriter, code int) {
 }
 
 func (s *Server) internalServerErrorHandler(w http.ResponseWriter, err error) {
-	log.Println("Error:", err)
 	debug.PrintStack()
-	s.reportError(w, http.StatusInternalServerError)
+	log.Println("Error:", err)
+	s.ReportError(w, http.StatusInternalServerError)
 }
