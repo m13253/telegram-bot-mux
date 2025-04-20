@@ -328,7 +328,6 @@ func (c *Client) waitForCooldown(ctx context.Context, chatID int64) error {
 		nonPrivate = 3 * time.Second
 	)
 
-	log.Println("ChatID:", chatID)
 	if chatID == 0 {
 		return nil
 	}
