@@ -212,7 +212,7 @@ func (s *Server) ReportError(w http.ResponseWriter, code int) {
 	h.Set("Content-Type", "application/json")
 	h.Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(code)
-	fmt.Fprintf(w, "{\"ok\":false,\"error_code\":%d,\"description\":%s}", code, http.StatusText(code))
+	fmt.Fprintf(w, "{\"ok\":false,\"error_code\":%d,\"description\":%s}", code, quoteJSON(http.StatusText(code)))
 }
 
 func (s *Server) internalServerErrorHandler(w http.ResponseWriter, err error) {
