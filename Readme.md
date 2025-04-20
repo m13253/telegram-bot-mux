@@ -86,7 +86,17 @@ $ systemctl enable --now --user telegram-bot-mux.service
 
 You can develop each of your modules as a separate Telegram bot, but specifying their Telegram Bot API to telegram-bot-mux.
 
-1. Telegram-bot-mux does not clear processed updates after a successful `getUpdates`, allowing other clients to retrieve them. If `offset` is omitted, it defaults to `-1` instead of `0`.
-2. Telegram-bot-mux ignores the `filter_update_types` parameter from downstream `getUpdates`. Specify it through the configuration file.
-3. Telegram-bot-mux will echo all sent messages back to the next `getUpdates`, allowing different clients to see messages sent by each other.
+1. Telegram-bot-mux does not delete confirmed updates after a successful `getUpdates`, allowing all clients to retrieve updates at their own paces. If `offset` is omitted or set to 0, instead of returning a list of unconfirmed updates, it returns an empty update to help the client calculate its next `offset`.
+2. Telegram-bot-mux ignores the `filter_update_types` parameter from downstream `getUpdates`. Please specify it through the configuration file.
+3. Telegram-bot-mux will echo all sent messages back to the next `getUpdates`, allowing different clients to see messages sent by each other. If your bot needs to respond to all incoming messages, please filter out messages send by the bot itself.
 4. However, messages sent by `copyMessage` and `copyMessages` will not be echoed due to missing information from upstream.
+
+## Rate limiting
+
+Telegram-bot-mux implements a queuing system to limit the total message sending rate to the upstream.
+
+According to <https://core.telegram.org/bots/faq#my-bot-is-hitting-limits-how-do-i-avoid-this>, we limit the global sending pace to 1/30 sec, private chat to 1 sec, and non-private chat to 3 sec. Private/non-private information is passively collected from prior updates, and defaults to non-private for unknown `chat_id`.
+
+Rate limiting is automatically applied to all API calls with a `chat_id` parameter. It supports URL query string, `application/x-www-form-urlencoded`, `application/json`, but not `multipart/form-data` due to memory usage concerns.
+
+While in queue, the client can cancel the pending API call by canceling the HTTP request.

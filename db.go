@@ -70,6 +70,18 @@ func (d *Database) NotifyUpdates() {
 	d.updateMutex.Unlock()
 }
 
+func (d *Database) GetLastUpdateID(ctx context.Context) (uint64, error) {
+	var id uint64
+	err := d.conn.QueryRowContext(ctx, "SELECT id FROM updates ORDER BY id DESC LIMIT 1;").Scan(&id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("database error: %v", err)
+	}
+	return id, nil
+}
+
 func (d *Database) GetUpdates(ctx context.Context, offset int64, limit uint64) iter.Seq2[string, error] {
 	var rows *sql.Rows
 	var err error

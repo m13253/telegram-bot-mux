@@ -123,10 +123,21 @@ func (s *Server) getUpdates(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&params)
 	}
 
-	// Limit parameter range
+	// Since we don't delete updates from the database, when offset=0, we return an empty update for the client to poll again with a new offset value.
 	if params.Offset == 0 {
-		params.Offset = -1
+		lastUpdateID, err := s.db.GetLastUpdateID(r.Context())
+		if err != nil {
+			s.internalServerErrorHandler(w, err)
+			return
+		}
+		h := w.Header()
+		h.Set("Content-Type", "application/json")
+		h.Set("X-Content-Type-Options", "nosniff")
+		fmt.Fprintf(w, "{\"ok\":true,\"result\":[{\"update_id\":%d}]}", lastUpdateID)
+		return
 	}
+
+	// Limit parameter range
 	if params.Limit == 0 || params.Limit > 100 {
 		params.Limit = 100
 	}
