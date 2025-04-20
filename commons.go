@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"strings"
 )
 
 const (
@@ -11,10 +10,9 @@ const (
 )
 
 func quoteJSON(s string) string {
-	var buf strings.Builder
-	err := json.NewEncoder(&buf).Encode(s)
+	buf, err := json.Marshal(s)
 	if err != nil {
 		panic(err)
 	}
-	return buf.String()
+	return string(buf)
 }
