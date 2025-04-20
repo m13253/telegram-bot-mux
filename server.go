@@ -131,6 +131,7 @@ func (s *Server) getUpdates(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h := w.Header()
+		h.Set("Cache-Control", "no-cache")
 		h.Set("Content-Type", "application/json")
 		h.Set("X-Content-Type-Options", "nosniff")
 		fmt.Fprintf(w, "{\"ok\":true,\"result\":[{\"update_id\":%d}]}", lastUpdateID)
@@ -157,6 +158,7 @@ func (s *Server) getUpdates(w http.ResponseWriter, r *http.Request) {
 			}
 			if !updatesReceived {
 				h := w.Header()
+				h.Set("Cache-Control", "no-cache")
 				h.Set("Content-Type", "application/json")
 				h.Set("X-Content-Type-Options", "nosniff")
 				w.Write([]byte("{\"ok\":true,\"result\":["))
@@ -176,6 +178,7 @@ func (s *Server) getUpdates(w http.ResponseWriter, r *http.Request) {
 		case <-timer:
 			cancel()
 			h := w.Header()
+			h.Set("Cache-Control", "no-cache")
 			h.Set("Content-Type", "application/json")
 			h.Set("X-Content-Type-Options", "nosniff")
 			w.Write([]byte("{\"ok\":true,\"result\":[]}"))
@@ -205,6 +208,7 @@ func (s *Server) forwardFileRequest(w http.ResponseWriter, r *http.Request, file
 func (s *Server) ReportError(w http.ResponseWriter, code int) {
 	h := w.Header()
 	h.Del("Content-Length")
+	h.Set("Cache-Control", "no-cache")
 	h.Set("Content-Type", "application/json")
 	h.Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(code)

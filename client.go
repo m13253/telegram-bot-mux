@@ -76,25 +76,23 @@ func (c *Client) StartPolling(ctx context.Context) error {
 	offset := uint64(0)
 
 	for {
-		var requestURL string
-		if offset == 0 {
-			requestURL = fmt.Sprintf(
-				"%s/getUpdates?timeout=%d&allowed_updates=%s",
-				c.conf.Upstream.ApiPrefix, c.conf.Upstream.PollingTimeout, c.conf.Upstream.FilterUpdateTypesStr,
-			)
-		} else {
-			requestURL = fmt.Sprintf(
-				"%s/getUpdates?offset=%d&timeout=%d&allowed_updates=%s",
-				c.conf.Upstream.ApiPrefix, offset, c.conf.Upstream.PollingTimeout, c.conf.Upstream.FilterUpdateTypesStr,
-			)
+		requestURL := c.conf.Upstream.ApiPrefix + "/getUpdates"
+		var requestBody bytes.Buffer
+		if offset != 0 {
+			fmt.Fprintf(&requestBody, "offset=%d&", offset)
 		}
-		log.Println("> GET", requestURL)
+		fmt.Fprintf(&requestBody,
+			"timeout=%d&allowed_updates=%s",
+			c.conf.Upstream.PollingTimeout, c.conf.Upstream.FilterUpdateTypesStr,
+		)
+		log.Printf("[ HTTP POST ] %s %s\n", requestURL, requestBody.String())
 
-		req, err := http.NewRequestWithContext(ctx, "GET", requestURL, nil)
+		req, err := http.NewRequestWithContext(ctx, "POST", requestURL, &requestBody)
 		if err != nil {
 			debug.PrintStack()
 			return fmt.Errorf("failed to send HTTP request: %v", err)
 		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("User-Agent", httpUserAgent)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -198,7 +196,7 @@ func (c *Client) ForwardRequest(ctx context.Context, s *Server, w http.ResponseW
 	} else {
 		requestURL = fmt.Sprintf("%s/%s?%s", urlPrefix, urlSuffix, r.URL.RawQuery)
 	}
-	log.Println(">", r.Method, requestURL)
+	log.Printf("[HTTP %s] %s\n", r.Method, requestURL)
 
 	if !isFileRequest {
 		params := struct {
@@ -292,7 +290,7 @@ func (c *Client) processEchoMessage(updateType string, body []byte) {
 	}
 	result := bodyJson.Get("result")
 	cb := func(_, message gjson.Result) bool {
-		err := tx.InsertLocalUpdate(updateType, message.Raw)
+		err := tx.InsertEchoUpdate(updateType, message.Raw)
 		if err != nil {
 			debug.PrintStack()
 			log.Println("Failed to store updates:", err)

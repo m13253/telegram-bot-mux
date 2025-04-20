@@ -152,12 +152,12 @@ func (tx *DatabaseTx) InsertUpdate(upstreamID uint64, updateType, updateValue st
 	if err != nil {
 		return fmt.Errorf("database error: %v", err)
 	}
-	tx.setUpdated(result)
+	tx.setUpdatedFlag(result)
 	return nil
 }
 
-func (tx *DatabaseTx) InsertLocalUpdate(updateType, updateValue string) error {
-	log.Printf("Inserting local update: {\"%s\":%s}\n", updateType, updateValue)
+func (tx *DatabaseTx) InsertEchoUpdate(updateType, updateValue string) error {
+	log.Printf("Inserting echo update: {\"%s\":%s}\n", updateType, updateValue)
 	result, err := tx.tx.Exec(
 		"INSERT OR REPLACE INTO updates (type, \"update\") VALUES (?, jsonb(?));",
 		updateType, updateValue,
@@ -165,7 +165,7 @@ func (tx *DatabaseTx) InsertLocalUpdate(updateType, updateValue string) error {
 	if err != nil {
 		return fmt.Errorf("database error: %v", err)
 	}
-	tx.setUpdated(result)
+	tx.setUpdatedFlag(result)
 	return nil
 }
 
@@ -187,11 +187,11 @@ func (tx *DatabaseTx) InsertMessage(messageJSON *gjson.Result) error {
 	if err != nil {
 		return fmt.Errorf("database error: %v", err)
 	}
-	tx.setUpdated(result)
+	tx.setUpdatedFlag(result)
 	return nil
 }
 
-func (tx *DatabaseTx) setUpdated(result sql.Result) {
+func (tx *DatabaseTx) setUpdatedFlag(result sql.Result) {
 	rows, err := result.RowsAffected()
 	tx.updated = tx.updated || (err == nil && rows != 0)
 }
