@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +18,9 @@ import (
 
 	"github.com/gorilla/handlers"
 )
+
+//go:embed webconsole/index.html
+var webConsoleBody []byte
 
 type Server struct {
 	conf       *Config
@@ -61,6 +65,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.ReportError(w, code)
 		} else if funcName == "getUpdates" {
 			s.getUpdates(w, r)
+		} else if funcName == ".tbmuxConsole" {
+			s.serveWebConsole(w, r)
 		} else {
 			s.forwardAPI(w, r, funcName)
 		}
@@ -186,6 +192,14 @@ func (s *Server) getUpdates(w http.ResponseWriter, r *http.Request) {
 		case <-update:
 		}
 	}
+}
+
+func (s *Server) serveWebConsole(w http.ResponseWriter, r *http.Request) {
+	h := w.Header()
+	h.Set("Content-Length", strconv.Itoa(len(webConsoleBody)))
+	h.Set("Content-Type", "text/html")
+	w.WriteHeader(http.StatusOK)
+	w.Write(webConsoleBody)
 }
 
 func (s *Server) forwardAPI(w http.ResponseWriter, r *http.Request, funcName string) {

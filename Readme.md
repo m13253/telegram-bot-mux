@@ -100,3 +100,11 @@ According to <https://core.telegram.org/bots/faq#my-bot-is-hitting-limits-how-do
 Rate limiting is automatically applied to all API calls with a `chat_id` parameter. It supports URL query string, `application/x-www-form-urlencoded`, `application/json`, but not `multipart/form-data` due to memory usage concerns.
 
 While in queue, the client can cancel the pending API call by canceling the HTTP request.
+
+## Web console
+
+Telegram-bot-mux provides a web console at `http://<listen_addr>/<api_path><auth_token>/.tbmuxConsole`.
+
+By visiting this web console using a web browser, you can check the list of previously received text messages, and send out text messages as your bot.
+
+However, this web console only supports text messages yet. No images, stickers, or attachments can be displayed or sent.

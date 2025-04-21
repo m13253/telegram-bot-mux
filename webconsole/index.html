@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title>Telegram-bot-mux Console</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+        body {
+            font-size: 14pt;
+        }
+
+        main {
+            margin-left: auto;
+            margin-right: auto;
+            max-width: 100%;
+            width: 40rem;
+        }
+
+        #msg {
+            font: inherit;
+            height: 4rem;
+            width: 100%;
+        }
+
+        .metaline {
+            display: flex;
+            flex-flow: row;
+            justify-content: space-between;
+            margin-bottom: 1rem;
+            margin-top: 1rem;
+        }
+
+        #msglist li:nth-child(odd) {
+            background-color: #cceeff;
+            width: 100%;
+        }
+
+        #msglist li:nth-child(even) {
+            width: 100%;
+        }
+
+        .msg_group {
+            color: #1880cf;
+            font-size: 0.8rem;
+        }
+
+        .msg_sender {
+            color: #cf4778;
+            font-size: 0.8rem;
+        }
+
+        .msg_text {
+            margin-left: 1rem;
+        }
+    </style>
+</head>
+
+<body>
+    <main>
+        <form id="send_form">
+            <div><textarea id="msg"></textarea></div>
+            <div class="metaline">
+                <label>Chat: <input id="chat" /></label>
+                <label>Reply: <input id="reply" /></label>
+                <input id="submit_btn" type="submit" value="Send" />
+            </div>
+        </form>
+        <ul id="msglist"></ul>
+    </main>
+    <script language="javascript">
+        function sendMessage(event) {
+            document.getElementById("submit_btn").disabled = true;
+            var xhr = new XMLHttpRequest();
+            xhr.open("POST", "sendMessage", true);
+            xhr.timeout = 10000;
+            xhr.onload = function () {
+                document.getElementById("msg").value = "";
+                document.getElementById("submit_btn").disabled = false;
+            };
+            xhr.ontimeout = xhr.onerror = xhr.onabort = function () {
+                document.getElementById("submit_btn").disabled = false;
+            };
+            xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+            xhr.send("text=" + encodeURIComponent(document.getElementById("msg").value) + "&chat_id=" + encodeURIComponent(document.getElementById("chat").value) + "&reply_to_message_id=" + encodeURIComponent(document.getElementById("reply").value));
+            event.preventDefault();
+        }
+        document.getElementById("send_form").addEventListener("submit", sendMessage);
+        function getUpdates(lastmsg) {
+            var xhr = new XMLHttpRequest();
+            xhr.open("POST", "getUpdates", true);
+            xhr.timeout = 60000;
+            xhr.onload = function () {
+                let updates = JSON.parse(xhr.responseText).result ?? [];
+                for (let i = 0; i < updates.length; i++) {
+                    let message = updates[i]?.message;
+                    if (message !== undefined) {
+                        addMsg(message);
+                    }
+                    if (updates[i].update_id >= lastmsg) {
+                        lastmsg = updates[i].update_id + 1;
+                    }
+                }
+                setTimeout(function () {
+                    getUpdates(lastmsg);
+                }, 100);
+            };
+            xhr.ontimeout = xhr.onerror = xhr.onabort = function () {
+                setTimeout(function () {
+                    getUpdates(lastmsg);
+                }, 1000);
+            };
+            xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+            xhr.send("offset=" + encodeURIComponent(lastmsg) + "&timeout=60");
+        }
+        function addMsg(message) {
+            let msglist = document.getElementById("msglist");
+            let el = document.createElement("li");
+            let el_div = document.createElement("div");
+            if (message.chat?.title !== undefined) {
+                let el_div_chat = document.createElement("div");
+                el_div_chat.className = "msg_group";
+                el_div_chat.innerText = message.chat?.title;
+                el.appendChild(el_div_chat);
+            }
+            let el_div_sender = document.createElement("div");
+            el_div_sender.className = "msg_sender";
+            let sender = message.from.first_name;
+            if (message.from.last_name !== undefined) {
+                sender += " " + message.from.last_name;
+            }
+            el_div_sender.innerText = sender;
+            el_div.appendChild(el_div_sender);
+            let el_div_msg = document.createElement("div");
+            el_div_msg.className = "msg_text";
+            if (message.text !== undefined) {
+                el_div_msg.innerText = message.text;
+            }
+            el_div.appendChild(el_div_msg);
+            el_div.addEventListener("click", function () {
+                fillRecp(message.chat.id, message.message_id);
+            });
+            el.appendChild(el_div);
+            msglist.insertBefore(el, msglist.firstChild);
+        }
+        function fillRecp(chat, reply) {
+            document.getElementById("chat").value = chat;
+            document.getElementById("reply").value = reply;
+        }
+        getUpdates(0);
+    </script>
+</body>
+
+</html>
