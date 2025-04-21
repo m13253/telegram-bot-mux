@@ -87,7 +87,7 @@ $ systemctl enable --now --user telegram-bot-mux.service
 
 You can develop each of your modules as a separate Telegram bot, but specifying their Telegram Bot API to telegram-bot-mux.
 
-1. Telegram-bot-mux does not delete confirmed updates after a successful `getUpdates`, allowing all clients to retrieve updates at their own paces. If `offset` is omitted or set to 0, instead of returning a list of unconfirmed updates, it returns an empty update to help the client calculate its next `offset`.
+1. Telegram-bot-mux does not delete confirmed updates after a successful `getUpdates`, allowing all clients to retrieve updates at their own paces. If `offset` is omitted or set to 0 or 1, instead of returning a list of unconfirmed updates, it returns an empty update to help the client calculate its next `offset`.
 2. Telegram-bot-mux ignores the `filter_update_types` parameter from downstream `getUpdates`. Please specify it through the configuration file.
 3. Telegram-bot-mux will echo all sent messages back to the next `getUpdates`, allowing different clients to see messages sent by each other. If your bot needs to respond to all incoming messages, please filter out messages send by the bot itself.
 4. However, messages sent by `copyMessage` and `copyMessages` will not be echoed due to missing information from upstream.
