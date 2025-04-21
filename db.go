@@ -72,7 +72,7 @@ func (d *Database) NotifyUpdates() {
 
 func (d *Database) GetLastUpdateID(ctx context.Context) (uint64, error) {
 	var id uint64
-	// Some client libraries poll from 0, other pool from 1, so we start our real updates from update_id = 2
+	// Some client libraries poll from 0, other poll from 1, so we start our real updates from update_id = 2
 	err := d.conn.QueryRowContext(ctx, "SELECT id + 1 FROM updates ORDER BY id DESC LIMIT 1;").Scan(&id)
 	if err != nil {
 		if err == sql.ErrNoRows {
