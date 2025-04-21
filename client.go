@@ -73,8 +73,41 @@ func NewClient(conf *Config, db *Database) *Client {
 }
 
 func (c *Client) StartPolling(ctx context.Context) error {
-	offset := uint64(0)
+	for {
+		requestURL := c.conf.Upstream.ApiPrefix + "/deleteWebhook"
+		body := bytes.NewReader([]byte("drop_pending_updates=false"))
+		req, err := http.NewRequestWithContext(ctx, "POST", requestURL, body)
+		if err != nil {
+			debug.PrintStack()
+			return fmt.Errorf("failed to send HTTP request: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("User-Agent", httpUserAgent)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			// Assume this is not a fatal error
+			log.Println("Upstream HTTP request error:", err)
+			c.sleepUntilRetry()
+			continue
+		}
+		resp.Body.Close()
 
+		requestSucceed := resp.StatusCode >= 200 && resp.StatusCode < 300
+		failureIsFatal := resp.StatusCode >= 400 && resp.StatusCode < 500
+		if !requestSucceed {
+			log.Println("Upstream server returned error:", resp.Status)
+		}
+		if failureIsFatal {
+			return fmt.Errorf("HTTP error: %s", resp.Status)
+		}
+		if !requestSucceed {
+			c.sleepUntilRetry()
+			continue
+		}
+		break
+	}
+
+	offset := uint64(0)
 	for {
 		requestURL := c.conf.Upstream.ApiPrefix + "/getUpdates"
 		var requestBody bytes.Buffer
@@ -101,7 +134,6 @@ func (c *Client) StartPolling(ctx context.Context) error {
 			c.sleepUntilRetry()
 			continue
 		}
-		defer resp.Body.Close()
 
 		requestSucceed := resp.StatusCode >= 200 && resp.StatusCode < 300
 		failureIsFatal := resp.StatusCode >= 400 && resp.StatusCode < 500
@@ -109,15 +141,18 @@ func (c *Client) StartPolling(ctx context.Context) error {
 			log.Println("Upstream server returned error:", resp.Status)
 		}
 		if failureIsFatal {
+			resp.Body.Close()
 			return fmt.Errorf("HTTP error: %s", resp.Status)
 		}
 		if !requestSucceed {
+			resp.Body.Close()
 			c.sleepUntilRetry()
 			continue
 		}
 
 		// Let's trust the server won't send us something ridiculously big
 		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
 		if err != nil {
 			debug.PrintStack()
 			log.Println("HTTP read error:", err)
@@ -231,7 +266,6 @@ func (c *Client) ForwardRequest(ctx context.Context, s *Server, w http.ResponseW
 	if err != nil {
 		return fmt.Errorf("upstream HTTP request error: %v", err)
 	}
-	defer resp.Body.Close()
 
 	respHeader := w.Header()
 	for k, v := range resp.Header {
@@ -248,6 +282,7 @@ func (c *Client) ForwardRequest(ctx context.Context, s *Server, w http.ResponseW
 	}
 	if echoUpdateType == "" || resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		_, err = io.Copy(w, resp.Body)
+		resp.Body.Close()
 		if err != nil {
 			debug.PrintStack()
 			log.Println("HTTP error:", err)
@@ -257,6 +292,7 @@ func (c *Client) ForwardRequest(ctx context.Context, s *Server, w http.ResponseW
 
 	var respBodyCopy bytes.Buffer
 	_, err = io.Copy(w, io.TeeReader(resp.Body, &respBodyCopy))
+	resp.Body.Close()
 	if err != nil {
 		debug.PrintStack()
 		log.Println("HTTP error:", err)

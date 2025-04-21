@@ -62,6 +62,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.ReportError(w, code)
 		} else if funcName == "getUpdates" {
 			s.getUpdates(w, r)
+		} else if funcName == "setWebhook" {
+			s.setWebhook(w, r)
+		} else if funcName == "deleteWebhook" {
+			s.deleteWebhook(w, r)
 		} else if funcName == ".tbmuxConsole" {
 			s.serveWebConsole(w, r)
 		} else {
@@ -125,6 +129,8 @@ func (s *Server) getUpdates(w http.ResponseWriter, r *http.Request) {
 	if ct == "application/json" {
 		_ = json.NewDecoder(r.Body).Decode(&params)
 	}
+
+	log.Printf("getUpdates(offset=%d, limit=%d, timeout=%d)\n", params.Offset, params.Limit, params.Timeout)
 
 	// Since we don't delete updates from the database, when offset=0, we return an empty update for the client to poll again with a new offset value.
 	if params.Offset == 0 {
@@ -197,11 +203,25 @@ func (s *Server) getUpdates(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) setWebhook(w http.ResponseWriter, _ *http.Request) {
+	s.ReportError(w, http.StatusForbidden)
+}
+
+func (s *Server) deleteWebhook(w http.ResponseWriter, _ *http.Request) {
+	// Prevent the parameter drop_pending_updates from being passed to the upstream
+	h := w.Header()
+	h.Set("Cache-Control", "no-cache")
+	h.Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("{\"ok\":true,\"result\":true,\"description\":\"Webhook is already deleted\"}"))
+}
+
 func (s *Server) serveWebConsole(w http.ResponseWriter, _ *http.Request) {
 	h := w.Header()
 	h.Set("Cache-Control", "no-cache")
 	h.Set("Content-Length", strconv.Itoa(len(webConsoleBody)))
 	h.Set("Content-Type", "text/html")
+	h.Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 	w.Write(webConsoleBody)
 }
