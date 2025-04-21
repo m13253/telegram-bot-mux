@@ -7,7 +7,7 @@ Telegram-bot-mux acts as a reverse proxy, allowing you to put different modules 
 ```bash
 $ git clone https://github.com/m13253/telegram-bot-mux.git
 $ cd telegram-bot-mux
-$ go build
+$ go build -v  # Make take a while
 $ cp tbmux.conf.example tbmux.conf
 ```
 
