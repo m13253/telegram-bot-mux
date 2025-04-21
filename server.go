@@ -156,7 +156,13 @@ func (s *Server) getUpdates(w http.ResponseWriter, r *http.Request) {
 		for updateJSON, err := range s.db.GetUpdates(r.Context(), params.Offset, params.Limit) {
 			if err != nil {
 				cancel()
-				s.internalServerErrorHandler(w, err)
+				if updatesReceived {
+					// We can no longer send any error message to the client
+					debug.PrintStack()
+					log.Println("Error:", err)
+				} else {
+					s.internalServerErrorHandler(w, err)
+				}
 				return
 			}
 			if !updatesReceived {
