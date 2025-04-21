@@ -141,7 +141,7 @@ func (d *Database) BeginTx() (DatabaseTx, error) {
 }
 
 func (tx *DatabaseTx) InsertUpdate(upstreamID uint64, updateType, updateValue string) error {
-	log.Printf("Inserting update %d: {\"%s\":%s}\n", upstreamID, updateType, updateValue)
+	log.Printf("Inserting update %d: {%q:%s}\n", upstreamID, updateType, updateValue)
 	result, err := tx.tx.Exec(
 		"INSERT OR REPLACE INTO updates (upstream_id, type, \"update\") VALUES (?, ?, jsonb(?));",
 		upstreamID, updateType, updateValue,
@@ -154,7 +154,7 @@ func (tx *DatabaseTx) InsertUpdate(upstreamID uint64, updateType, updateValue st
 }
 
 func (tx *DatabaseTx) InsertEchoUpdate(updateType, updateValue string) error {
-	log.Printf("Inserting echo update: {\"%s\":%s}\n", updateType, updateValue)
+	log.Printf("Inserting echo update: {%q:%s}\n", updateType, updateValue)
 	result, err := tx.tx.Exec(
 		"INSERT OR REPLACE INTO updates (type, \"update\") VALUES (?, jsonb(?));",
 		updateType, updateValue,
