@@ -157,7 +157,7 @@ func (s *Server) getUpdates(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				cancel()
 				if updatesReceived {
-					// We can no longer send any error message to the client
+					// Too late to report error to the client
 					debug.PrintStack()
 					log.Println("Error:", err)
 				} else {
