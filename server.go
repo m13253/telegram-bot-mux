@@ -195,8 +195,9 @@ func (s *Server) getUpdates(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) serveWebConsole(w http.ResponseWriter, r *http.Request) {
+func (s *Server) serveWebConsole(w http.ResponseWriter, _ *http.Request) {
 	h := w.Header()
+	h.Set("Cache-Control", "no-cache")
 	h.Set("Content-Length", strconv.Itoa(len(webConsoleBody)))
 	h.Set("Content-Type", "text/html")
 	w.WriteHeader(http.StatusOK)
