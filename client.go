@@ -330,23 +330,18 @@ func (c *Client) waitForCooldown(ctx context.Context, chatID int64) error {
 		return nil
 	}
 
-	now := time.Now()
+	until := time.Now()
 	chatType, err := c.db.GetChatType(ctx, chatID)
 	if err != nil {
 		return fmt.Errorf("failed to retrieve chat information: %v", err)
 	}
 
 	c.cooldownMutex.Lock()
-	until := c.globalCooldown
 	if cd, ok := c.chatCooldown[chatID]; ok {
 		if cd.After(until) {
 			until = cd
 		}
 	}
-	if until.Before(now) {
-		until = now
-	}
-	c.globalCooldown = until.Add(global)
 	if chatType == "private" {
 		c.chatCooldown[chatID] = until.Add(private)
 	} else {
@@ -356,10 +351,29 @@ func (c *Client) waitForCooldown(ctx context.Context, chatID int64) error {
 
 	dur := time.Until(until)
 	if dur > 0 {
+		log.Printf("Chat ID %d: cooldown %v\n", chatID, dur)
 		select {
 		case <-time.After(time.Until(until)):
 		case <-ctx.Done():
 		}
 	}
+
+	until = time.Now()
+	c.cooldownMutex.Lock()
+	if c.globalCooldown.After(until) {
+		until = c.globalCooldown
+	}
+	c.globalCooldown = until.Add(global)
+	c.cooldownMutex.Unlock()
+
+	dur = time.Until(until)
+	if dur > 0 {
+		log.Printf("Global cooldown %v\n", dur)
+		select {
+		case <-time.After(time.Until(until)):
+		case <-ctx.Done():
+		}
+	}
+
 	return nil
 }
