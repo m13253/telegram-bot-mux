@@ -86,9 +86,9 @@ func (d *Database) GetUpdates(ctx context.Context, offset int64, limit uint64) i
 	var rows *sql.Rows
 	var err error
 	if offset > 0 {
-		rows, err = d.conn.QueryContext(ctx, "SELECT id, type, json(\"update\") FROM updates WHERE id >= ? ORDER BY id ASC LIMIT ?;", offset, limit)
+		rows, err = d.conn.QueryContext(ctx, "SELECT json_object('update_id', id, type, \"update\") FROM updates WHERE id >= ? ORDER BY id ASC LIMIT ?;", offset, limit)
 	} else {
-		rows, err = d.conn.QueryContext(ctx, "SELECT id, type, json(\"update\") FROM (SELECT id, type, \"update\" FROM updates ORDER BY id DESC LIMIT ?) ORDER BY id ASC LIMIT ?;", -offset, limit)
+		rows, err = d.conn.QueryContext(ctx, "SELECT json_object('update_id', id, type, \"update\") FROM (SELECT id, type, \"update\" FROM updates ORDER BY id DESC LIMIT ?) ORDER BY id ASC LIMIT ?;", -offset, limit)
 	}
 	if err != nil {
 		return func(yield func(string, error) bool) {
@@ -97,17 +97,14 @@ func (d *Database) GetUpdates(ctx context.Context, offset int64, limit uint64) i
 	}
 	return func(yield func(string, error) bool) {
 		for rows.Next() {
-			var id uint64
-			var updateType, updateValue string
-			err := rows.Scan(&id, &updateType, &updateValue)
+			var update string
+			err := rows.Scan(&update)
 			if err != nil {
 				yield("", fmt.Errorf("database error: %v", err))
 				rows.Close()
 				return
 			}
-
-			updateJSON := fmt.Sprintf("{\"update_id\":%d,%s:%s}", id, quoteJSON(updateType), updateValue)
-			if !yield(updateJSON, nil) {
+			if !yield(update, nil) {
 				rows.Close()
 				return
 			}
