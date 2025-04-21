@@ -32,7 +32,7 @@ func OpenDatabase(conf *Config) (*Database, error) {
 	}
 	_, err = conn.Exec(
 		"BEGIN;" +
-			"CREATE TABLE IF NOT EXISTS chats (id INTEGER PRIMARY KEY, type TEXT NOT NULL);" +
+			"CREATE TABLE IF NOT EXISTS chats (id INTEGER PRIMARY KEY, chat JSONB NOT NULL);" +
 			"CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, message_id INTEGER NOT NULL, message_thread_id INTEGER, chat_id INTEGER NOT NULL, message JSONB NOT NULL);" +
 			"CREATE TABLE IF NOT EXISTS updates (id INTEGER PRIMARY KEY, upstream_id INTEGER UNIQUE, type TEXT NOT NULL, \"update\" JSONB NOT NULL);" +
 			"CREATE INDEX IF NOT EXISTS idx_message_chat_id ON messages (chat_id, message_thread_id, message_id);" +
@@ -122,7 +122,7 @@ func (d *Database) GetUpdates(ctx context.Context, offset int64, limit uint64) i
 
 func (d *Database) GetChatType(ctx context.Context, chatID int64) (string, error) {
 	var chatType string
-	err := d.conn.QueryRowContext(ctx, "SELECT type FROM chats WHERE id = ?;", chatID).Scan(&chatType)
+	err := d.conn.QueryRowContext(ctx, "SELECT jsonb_extract(chat, '$.type') FROM chats WHERE id = ?;", chatID).Scan(&chatType)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return "", nil
@@ -176,13 +176,13 @@ func (tx *DatabaseTx) InsertMessage(messageJSON *gjson.Result) error {
 		Int64: messageThreadID.Int(),
 		Valid: messageThreadID.Exists(),
 	}
-	chatID := messageJSON.Get("chat.id").Int()
-	chatType := messageJSON.Get("chat.type").String()
+	chat := messageJSON.Get("chat")
+	chatID := chat.Get("id").Int()
 	log.Println("Inserting message:", messageJSON)
 	result, err := tx.tx.Exec(
-		"INSERT OR REPLACE INTO chats (id, type) VALUES (?, ?);"+
+		"INSERT OR REPLACE INTO chats (id, chat) VALUES (?, jsonb(?));"+
 			"INSERT OR REPLACE INTO messages (message_id, message_thread_id, chat_id, message) VALUES (?, ?, ?, jsonb(?));",
-		chatID, chatType, messageID, messageThreadIDSQL, chatID, messageJSON.Raw,
+		chatID, chat.Raw, messageID, messageThreadIDSQL, chatID, messageJSON.Raw,
 	)
 	if err != nil {
 		return fmt.Errorf("database error: %v", err)
