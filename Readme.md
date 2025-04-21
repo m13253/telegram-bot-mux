@@ -97,7 +97,7 @@ Telegram-bot-mux implements a queuing system to limit the total message sending 
 
 According to <https://core.telegram.org/bots/faq#my-bot-is-hitting-limits-how-do-i-avoid-this>, we limit the global sending pace to 1/30 sec, private chat to 1 sec, and non-private chat to 3 sec. Private/non-private information is passively collected from prior updates, and defaults to non-private for unknown `chat_id`.
 
-Rate limiting is automatically applied to all API calls with a `chat_id` parameter. It supports URL query string, `application/x-www-form-urlencoded`, `application/json`, but not `multipart/form-data` due to memory usage concerns.
+Rate limiting is automatically applied to all API calls with a `chat_id` parameter. It supports URL query string, `application/x-www-form-urlencoded`, `application/json`, but `multipart/form-data` bypasses rate limiting due to memory usage concerns.
 
 While in queue, the client can cancel the pending API call by canceling the HTTP request.
 
@@ -107,4 +107,4 @@ Telegram-bot-mux provides a simple web console at `http://<listen_addr>/<api_pat
 
 By visiting this web console using a web browser, you can check the list of previously received text messages, and send out text messages as your bot.
 
-However, this web console only supports text messages yet. No images, stickers, or attachments can be displayed or sent.
+However, this web console only supports text messages right now. No images, stickers, or attachments can be displayed or sent yet.
