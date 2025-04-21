@@ -119,7 +119,7 @@ func (d *Database) GetUpdates(ctx context.Context, offset int64, limit uint64) i
 
 func (d *Database) GetChatType(ctx context.Context, chatID int64) (string, error) {
 	var chatType string
-	err := d.conn.QueryRowContext(ctx, "SELECT jsonb_extract(chat, '$.type') FROM chats WHERE id = ?;", chatID).Scan(&chatType)
+	err := d.conn.QueryRowContext(ctx, "SELECT json_extract(chat, '$.type') FROM chats WHERE id = ?;", chatID).Scan(&chatType)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return "", nil
