@@ -72,10 +72,11 @@ func (d *Database) NotifyUpdates() {
 
 func (d *Database) GetLastUpdateID(ctx context.Context) (uint64, error) {
 	var id uint64
-	err := d.conn.QueryRowContext(ctx, "SELECT id FROM updates ORDER BY id DESC LIMIT 1;").Scan(&id)
+	// Some client libraries poll from 0, other pool from 1, so we start our real updates from update_id = 2
+	err := d.conn.QueryRowContext(ctx, "SELECT id + 1 FROM updates ORDER BY id DESC LIMIT 1;").Scan(&id)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return 0, nil
+			return 1, nil
 		}
 		return 0, fmt.Errorf("database error: %v", err)
 	}
@@ -86,9 +87,9 @@ func (d *Database) GetUpdates(ctx context.Context, offset int64, limit uint64) i
 	var rows *sql.Rows
 	var err error
 	if offset > 0 {
-		rows, err = d.conn.QueryContext(ctx, "SELECT json_object('update_id', id, type, \"update\") FROM updates WHERE id >= ? ORDER BY id ASC LIMIT ?;", offset, limit)
+		rows, err = d.conn.QueryContext(ctx, "SELECT json_object('update_id', id + 1, type, \"update\") FROM updates WHERE id >= ? ORDER BY id ASC LIMIT ?;", offset-1, limit)
 	} else {
-		rows, err = d.conn.QueryContext(ctx, "SELECT json_object('update_id', id, type, \"update\") FROM (SELECT id, type, \"update\" FROM updates ORDER BY id DESC LIMIT ?) ORDER BY id ASC LIMIT ?;", -offset, limit)
+		rows, err = d.conn.QueryContext(ctx, "SELECT json_object('update_id', id + 1, type, \"update\") FROM (SELECT id, type, \"update\" FROM updates ORDER BY id DESC LIMIT ?) ORDER BY id ASC LIMIT ?;", -offset, limit)
 	}
 	if err != nil {
 		return func(yield func(string, error) bool) {

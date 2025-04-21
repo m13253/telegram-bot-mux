@@ -132,8 +132,9 @@ func (s *Server) getUpdates(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("getUpdates(offset=%d, limit=%d, timeout=%d)\n", params.Offset, params.Limit, params.Timeout)
 
-	// Since we don't delete updates from the database, when offset=0, we return an empty update for the client to poll again with a new offset value.
-	if params.Offset == 0 {
+	// Since we don't delete updates from the database, when 0 <= offset <= 1, we return an empty update for the client to poll again with a new offset value.
+	// Real updates starts from update_id = 2
+	if params.Offset == 0 || params.Offset == 1 {
 		lastUpdateID, err := s.db.GetLastUpdateID(r.Context())
 		if err != nil {
 			s.internalServerErrorHandler(w, err)

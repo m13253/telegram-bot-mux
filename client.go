@@ -75,8 +75,10 @@ func NewClient(conf *Config, db *Database) *Client {
 func (c *Client) StartPolling(ctx context.Context) error {
 	for {
 		requestURL := c.conf.Upstream.ApiPrefix + "/deleteWebhook"
-		body := bytes.NewReader([]byte("drop_pending_updates=false"))
-		req, err := http.NewRequestWithContext(ctx, "POST", requestURL, body)
+		requestBody := bytes.NewBufferString("drop_pending_updates=false")
+		log.Printf("[ HTTP POST ] %s %s\n", requestURL, requestBody.String())
+
+		req, err := http.NewRequestWithContext(ctx, "POST", requestURL, requestBody)
 		if err != nil {
 			debug.PrintStack()
 			return fmt.Errorf("failed to send HTTP request: %v", err)
