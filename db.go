@@ -31,11 +31,11 @@ func OpenDatabase(conf *Config) (*Database, error) {
 		return nil, fmt.Errorf("failed to open database: %v", err)
 	}
 	_, err = conn.Exec(
-		"BEGIN;" +
-			"CREATE TABLE IF NOT EXISTS chats (id INTEGER PRIMARY KEY, chat JSONB NOT NULL);" +
-			"CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, message_id INTEGER NOT NULL, message_thread_id INTEGER, chat_id INTEGER NOT NULL, message JSONB NOT NULL);" +
-			"CREATE TABLE IF NOT EXISTS updates (id INTEGER PRIMARY KEY, upstream_id INTEGER UNIQUE, type TEXT NOT NULL, \"update\" JSONB NOT NULL);" +
-			"CREATE INDEX IF NOT EXISTS idx_message_chat_id ON messages (chat_id, message_thread_id, message_id);" +
+		"BEGIN; " +
+			"CREATE TABLE IF NOT EXISTS chats (id INTEGER PRIMARY KEY, chat JSONB NOT NULL); " +
+			"CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, message_id INTEGER NOT NULL, message_thread_id INTEGER, chat_id INTEGER NOT NULL, message JSONB NOT NULL); " +
+			"CREATE TABLE IF NOT EXISTS updates (id INTEGER PRIMARY KEY, upstream_id INTEGER UNIQUE, type TEXT NOT NULL, \"update\" JSONB NOT NULL); " +
+			"CREATE INDEX IF NOT EXISTS idx_message_chat_id ON messages (chat_id, message_thread_id, message_id); " +
 			"COMMIT;")
 	if err != nil {
 		return nil, fmt.Errorf("failed to write to database: %v", err)
@@ -177,7 +177,7 @@ func (tx *DatabaseTx) InsertMessage(messageJSON *gjson.Result) error {
 	chatID := chat.Get("id").Int()
 	log.Println("Inserting message:", messageJSON)
 	result, err := tx.tx.Exec(
-		"INSERT OR REPLACE INTO chats (id, chat) VALUES (?, jsonb(?));"+
+		"INSERT OR REPLACE INTO chats (id, chat) VALUES (?, jsonb(?)); "+
 			"INSERT OR REPLACE INTO messages (message_id, message_thread_id, chat_id, message) VALUES (?, ?, ?, jsonb(?));",
 		chatID, chat.Raw, messageID, messageThreadIDSQL, chatID, messageJSON.Raw,
 	)
