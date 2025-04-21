@@ -1,7 +1,6 @@
 package main
 
 import (
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,9 +17,6 @@ import (
 
 	"github.com/gorilla/handlers"
 )
-
-//go:embed webconsole/index.html
-var webConsoleBody []byte
 
 type Server struct {
 	conf       *Config
@@ -222,13 +218,26 @@ func (s *Server) forwardFileRequest(w http.ResponseWriter, r *http.Request, file
 }
 
 func (s *Server) ReportError(w http.ResponseWriter, code int) {
+	body, err := json.Marshal(struct {
+		OK          bool   `json:"ok"`
+		ErrorCode   int    `json:"error_code"`
+		Description string `json:"description"`
+	}{
+		OK:          false,
+		ErrorCode:   code,
+		Description: http.StatusText(code),
+	})
+	if err != nil {
+		panic(err)
+	}
+
 	h := w.Header()
-	h.Del("Content-Length")
 	h.Set("Cache-Control", "no-cache")
+	h.Set("Content-Length", strconv.Itoa(len(body)))
 	h.Set("Content-Type", "application/json")
 	h.Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(code)
-	fmt.Fprintf(w, "{\"ok\":false,\"error_code\":%d,\"description\":%s}", code, quoteJSON(http.StatusText(code)))
+	w.Write(body)
 }
 
 func (s *Server) internalServerErrorHandler(w http.ResponseWriter, err error) {

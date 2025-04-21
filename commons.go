@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/json"
+	_ "embed"
 )
 
 const (
@@ -9,10 +9,5 @@ const (
 	httpUserAgent = "Mozilla/5.0 Telegram-bot-muxer/1.0 (+https://github.com/m13253/telegram-bot-muxer)"
 )
 
-func quoteJSON(s string) string {
-	buf, err := json.Marshal(s)
-	if err != nil {
-		panic(err)
-	}
-	return string(buf)
-}
+//go:embed webconsole/index.html
+var webConsoleBody []byte
