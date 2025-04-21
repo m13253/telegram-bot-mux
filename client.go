@@ -23,9 +23,9 @@ type Client struct {
 	updateTypeIsMessage map[string]struct{}
 	echoUpdateType      map[string]string
 	nextRetryInterval   time.Duration
-	cooldownMutex       *sync.Mutex
-	globalCooldown      time.Time
-	chatCooldown        map[int64]time.Time
+	globalCooldown      *CooldownQueue
+	chatCooldown        map[int64]*CooldownQueue
+	chatCooldownMtx     sync.Mutex
 }
 
 func NewClient(conf *Config, db *Database) *Client {
@@ -41,9 +41,9 @@ func NewClient(conf *Config, db *Database) *Client {
 			"edited_business_message": {},
 		},
 		nextRetryInterval: time.Second,
-		cooldownMutex:     new(sync.Mutex),
-		globalCooldown:    time.Now(),
-		chatCooldown:      make(map[int64]time.Time),
+		globalCooldown:    NewCooldownQueue(),
+		chatCooldown:      make(map[int64]*CooldownQueue),
+		chatCooldownMtx:   sync.Mutex{},
 	}
 	c.echoUpdateType = map[string]string{
 		"sendMessage":             "message",
@@ -335,44 +335,33 @@ func (c *Client) waitForCooldown(ctx context.Context, chatID int64) error {
 		return fmt.Errorf("failed to retrieve chat information: %v", err)
 	}
 
-	c.cooldownMutex.Lock()
-	until := time.Now()
-	if cd, ok := c.chatCooldown[chatID]; ok {
-		if cd.After(until) {
-			until = cd
-		}
-	}
+	var cd time.Duration
 	if chatType == "private" {
-		c.chatCooldown[chatID] = until.Add(private)
+		cd = private
 	} else {
-		c.chatCooldown[chatID] = until.Add(nonPrivate)
-	}
-	c.cooldownMutex.Unlock()
-
-	dur := time.Until(until)
-	if dur > 0 {
-		log.Printf("Chat %d cooldown %v\n", chatID, dur)
-		select {
-		case <-time.After(time.Until(until)):
-		case <-ctx.Done():
-		}
+		cd = nonPrivate
 	}
 
-	c.cooldownMutex.Lock()
-	until = time.Now()
-	if c.globalCooldown.After(until) {
-		until = c.globalCooldown
+	c.chatCooldownMtx.Lock()
+	queue, ok := c.chatCooldown[chatID]
+	if !ok {
+		queue = NewCooldownQueue()
+		c.chatCooldown[chatID] = queue
 	}
-	c.globalCooldown = until.Add(global)
-	c.cooldownMutex.Unlock()
+	notify, cancel := queue.Push(cd)
+	c.chatCooldownMtx.Unlock()
+	select {
+	case <-notify:
+	case <-ctx.Done():
+		cancel()
+		return nil
+	}
 
-	dur = time.Until(until)
-	if dur > 0 {
-		log.Printf("Global cooldown %v\n", dur)
-		select {
-		case <-time.After(time.Until(until)):
-		case <-ctx.Done():
-		}
+	notify, cancel = c.globalCooldown.Push(global)
+	select {
+	case <-notify:
+	case <-ctx.Done():
+		cancel()
 	}
 
 	return nil
