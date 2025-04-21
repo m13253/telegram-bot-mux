@@ -27,7 +27,7 @@ func NewCooldownQueue() *CooldownQueue {
 		queue:          make(map[uint64]CooldownQueueItem),
 		front:          0,
 		back:           0,
-		lastPop:        time.Now(),
+		lastPop:        time.Time{},
 		interruptWaker: nil,
 		wakerRunning:   false,
 	}
@@ -58,7 +58,10 @@ func (q *CooldownQueue) waker() {
 	q.mtx.Lock()
 	for q.front < q.back {
 		if item, ok := q.queue[q.front]; ok {
-			dur := time.Until(q.lastPop.Add(item.cooldown))
+			var dur time.Duration
+			if !q.lastPop.IsZero() {
+				dur = time.Until(q.lastPop.Add(item.cooldown))
+			}
 			if dur <= 0 {
 				q.lastPop = time.Now()
 				close(item.notify)
