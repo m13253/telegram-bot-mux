@@ -100,7 +100,7 @@ According to <https://core.telegram.org/bots/faq#my-bot-is-hitting-limits-how-do
 
 Rate limiting is automatically applied to all API calls with a `chat_id` parameter. It supports URL query string, `application/x-www-form-urlencoded`, `application/json`, but `multipart/form-data` bypasses rate limiting due to memory usage concerns.
 
-While in queue, the client can cancel the pending API call by canceling the HTTP request.
+While in queue, the client can cancel the pending API call by canceling the HTTP request. However, the occupied time slot in the queue is not released in the current implementation.
 
 ## Web console
 

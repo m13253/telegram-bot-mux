@@ -330,13 +330,13 @@ func (c *Client) waitForCooldown(ctx context.Context, chatID int64) error {
 		return nil
 	}
 
-	until := time.Now()
 	chatType, err := c.db.GetChatType(ctx, chatID)
 	if err != nil {
 		return fmt.Errorf("failed to retrieve chat information: %v", err)
 	}
 
 	c.cooldownMutex.Lock()
+	until := time.Now()
 	if cd, ok := c.chatCooldown[chatID]; ok {
 		if cd.After(until) {
 			until = cd
@@ -351,15 +351,15 @@ func (c *Client) waitForCooldown(ctx context.Context, chatID int64) error {
 
 	dur := time.Until(until)
 	if dur > 0 {
-		log.Printf("Chat ID %d: cooldown %v\n", chatID, dur)
+		log.Printf("Chat %d cooldown %v\n", chatID, dur)
 		select {
 		case <-time.After(time.Until(until)):
 		case <-ctx.Done():
 		}
 	}
 
-	until = time.Now()
 	c.cooldownMutex.Lock()
+	until = time.Now()
 	if c.globalCooldown.After(until) {
 		until = c.globalCooldown
 	}
