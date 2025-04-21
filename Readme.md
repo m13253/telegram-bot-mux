@@ -13,7 +13,7 @@ $ cp tbmux.conf.example tbmux.conf
 
 Then, edit `tbmux.conf`:
 ```toml
-# Database file path
+# The database file path
 db = "tbmux.db"
 
 [upstream]
