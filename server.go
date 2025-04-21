@@ -43,6 +43,7 @@ func NewServer(conf *Config, db *Database, c *Client) (*Server, error) {
 		return nil, fmt.Errorf("failed to start HTTP server: %v", err)
 	}
 	log.Println("HTTP server is listening on", s.listener.Addr())
+	log.Printf("Web console available at http://%s/%s%s/.tbmuxConsole", s.listener.Addr(), strings.TrimPrefix(s.conf.Downstream.ApiPath, "/"), s.conf.Downstream.AuthToken)
 	return s, nil
 }
 
