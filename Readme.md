@@ -17,11 +17,11 @@ Then, edit `tbmux.conf`:
 db = "tbmux.db"
 
 [upstream]
-# Specify the URL prefix of Telegram Bot API, or a Local Bot API Server.
+# Specify the URL prefix of the upstream Telegram Bot API, or a Local Bot API Server.
 # Refer to https://core.telegram.org/bots/api#using-a-local-bot-api-server for information about Local Bot API Servers.
 api_url = "https://api.telegram.org/bot"
 
-# Specify the URL prefix of Telegram Bot File Server, or a Local Bot API Server.
+# Specify the URL prefix of the upstream Telegram Bot File Server, or a Local Bot API Server.
 file_url = "https://api.telegram.org/file/bot"
 
 # Specify the authentication token
@@ -42,11 +42,11 @@ filter_update_types = []
 # Specify a TCP address and port for telegram-bot-mux to listen on
 listen_addr = "localhost:8080"
 
-# Specify an HTTP path for telegram-bot-mux to serve Telegram Bot API
+# Specify an HTTP path for telegram-bot-mux to serve a downstream Telegram Bot API
 api_path = "/bot"
 
-# Specify an HTTP path for telegram-bot-mux to serve Telegram Bot File Server
-# Any requests to this path will be reverse-proxied to upstream Bot File Server
+# Specify an HTTP path for telegram-bot-mux to serve a downstream Telegram Bot File Server
+# Any requests to this path will be reverse-proxied to the upstream Bot File Server
 file_path = "/file/bot"
 
 # Specify any authentication token for your downstream clients as you wish
