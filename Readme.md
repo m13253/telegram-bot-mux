@@ -58,7 +58,7 @@ After that, run `telegram-bot-mux`:
 $ ./telegram-bot-mux --conf tbmux.conf
 ```
 
-Alternatively, you can create a systemd unit to run telegram-bot-mux:
+Alternatively, you can create a systemd unit to run telegram-bot-mux automatically at login:
 ```bash
 $ cat >~/.config/systemd/user/telegram-bot-mux.service <<EOF
 [Unit]
@@ -79,6 +79,7 @@ WantedBy=default.target
 EOF
 
 $ systemctl daemon-reload --user
+$ loginctl enable-linger "$USER"
 $ systemctl enable --now --user telegram-bot-mux.service
 ```
 
