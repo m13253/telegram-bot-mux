@@ -103,7 +103,7 @@ While in queue, the client can cancel the pending API call by canceling the HTTP
 
 ## Web console
 
-Telegram-bot-mux provides a web console at `http://<listen_addr>/<api_path><auth_token>/.tbmuxConsole`.
+Telegram-bot-mux provides a simple web console at `http://<listen_addr>/<api_path><auth_token>/.tbmuxConsole`.
 
 By visiting this web console using a web browser, you can check the list of previously received text messages, and send out text messages as your bot.
 
