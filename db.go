@@ -71,9 +71,14 @@ func (d *Database) NotifyUpdates() {
 }
 
 func (d *Database) GetLastUpdateID(ctx context.Context) (uint64, error) {
-	var id uint64
 	// Some client libraries poll from 0, other poll from 1, so we start our real updates from update_id = 2
-	err := d.conn.QueryRowContext(ctx, "SELECT id + 1 FROM updates ORDER BY id DESC LIMIT 1;").Scan(&id)
+	stmt, err := d.conn.PrepareContext(ctx, "SELECT id + 1 FROM updates ORDER BY id DESC LIMIT 1;")
+	if err != nil {
+		return 0, fmt.Errorf("database error: %v", err)
+	}
+	var id uint64
+	err = stmt.QueryRowContext(ctx).Scan(&id)
+	stmt.Close()
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return 1, nil
@@ -84,14 +89,21 @@ func (d *Database) GetLastUpdateID(ctx context.Context) (uint64, error) {
 }
 
 func (d *Database) GetUpdates(ctx context.Context, offset int64, limit uint64) iter.Seq2[string, error] {
-	var rows *sql.Rows
+	var stmt *sql.Stmt
 	var err error
-	if offset > 0 {
-		rows, err = d.conn.QueryContext(ctx, "SELECT json_object('update_id', id + 1, type, \"update\") FROM updates WHERE id >= ? ORDER BY id ASC LIMIT ?;", offset-1, limit)
+	if offset >= 0 {
+		stmt, err = d.conn.PrepareContext(ctx, "SELECT json_object('update_id', id + 1, type, \"update\") FROM updates WHERE id >= ? - 1 ORDER BY id ASC LIMIT ?;")
 	} else {
-		rows, err = d.conn.QueryContext(ctx, "SELECT json_object('update_id', id + 1, type, \"update\") FROM (SELECT id, type, \"update\" FROM updates ORDER BY id DESC LIMIT ?) ORDER BY id ASC LIMIT ?;", -offset, limit)
+		stmt, err = d.conn.PrepareContext(ctx, "SELECT json_object('update_id', id + 1, type, \"update\") FROM (SELECT id, type, \"update\" FROM updates ORDER BY id DESC LIMIT -?) ORDER BY id ASC LIMIT ?;")
 	}
 	if err != nil {
+		return func(yield func(string, error) bool) {
+			yield("", fmt.Errorf("database error: %v", err))
+		}
+	}
+	rows, err := stmt.QueryContext(ctx, offset, limit)
+	if err != nil {
+		stmt.Close()
 		return func(yield func(string, error) bool) {
 			yield("", fmt.Errorf("database error: %v", err))
 		}
@@ -101,26 +113,34 @@ func (d *Database) GetUpdates(ctx context.Context, offset int64, limit uint64) i
 			var update string
 			err := rows.Scan(&update)
 			if err != nil {
-				yield("", fmt.Errorf("database error: %v", err))
 				rows.Close()
+				stmt.Close()
+				yield("", fmt.Errorf("database error: %v", err))
 				return
 			}
 			if !yield(update, nil) {
 				rows.Close()
+				stmt.Close()
 				return
 			}
 		}
 		err := rows.Err()
+		rows.Close()
+		stmt.Close()
 		if err != nil {
 			yield("", fmt.Errorf("database error: %v", err))
 		}
-		rows.Close()
 	}
 }
 
 func (d *Database) GetChatType(ctx context.Context, chatID int64) (string, error) {
+	stmt, err := d.conn.PrepareContext(ctx, "SELECT json_extract(chat, '$.type') FROM chats WHERE id = ?;")
+	if err != nil {
+		return "", fmt.Errorf("database error: %v", err)
+	}
 	var chatType string
-	err := d.conn.QueryRowContext(ctx, "SELECT json_extract(chat, '$.type') FROM chats WHERE id = ?;", chatID).Scan(&chatType)
+	err = stmt.QueryRowContext(ctx, chatID).Scan(&chatType)
+	stmt.Close()
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return "", nil
@@ -143,27 +163,33 @@ func (d *Database) BeginTx() (DatabaseTx, error) {
 
 func (tx *DatabaseTx) InsertUpdate(upstreamID uint64, updateType, updateValue string) error {
 	log.Printf("Inserting update %d: {%q:%s}\n", upstreamID, updateType, updateValue)
-	result, err := tx.tx.Exec(
-		"INSERT OR REPLACE INTO updates (upstream_id, type, \"update\") VALUES (?, ?, jsonb(?));",
-		upstreamID, updateType, updateValue,
-	)
+	stmt, err := tx.tx.Prepare("INSERT OR REPLACE INTO updates (upstream_id, type, \"update\") VALUES (?, ?, jsonb(?));")
 	if err != nil {
 		return fmt.Errorf("database error: %v", err)
 	}
+	result, err := stmt.Exec(upstreamID, updateType, updateValue)
+	if err != nil {
+		stmt.Close()
+		return fmt.Errorf("database error: %v", err)
+	}
 	tx.setUpdatedFlag(result)
+	stmt.Close()
 	return nil
 }
 
 func (tx *DatabaseTx) InsertEchoUpdate(updateType, updateValue string) error {
 	log.Printf("Inserting echo update: {%q:%s}\n", updateType, updateValue)
-	result, err := tx.tx.Exec(
-		"INSERT OR REPLACE INTO updates (type, \"update\") VALUES (?, jsonb(?));",
-		updateType, updateValue,
-	)
+	stmt, err := tx.tx.Prepare("INSERT OR REPLACE INTO updates (type, \"update\") VALUES (?, jsonb(?));")
 	if err != nil {
 		return fmt.Errorf("database error: %v", err)
 	}
+	result, err := stmt.Exec(updateType, updateValue)
+	if err != nil {
+		stmt.Close()
+		return fmt.Errorf("database error: %v", err)
+	}
 	tx.setUpdatedFlag(result)
+	stmt.Close()
 	return nil
 }
 
@@ -177,15 +203,20 @@ func (tx *DatabaseTx) InsertMessage(messageJSON *gjson.Result) error {
 	chat := messageJSON.Get("chat")
 	chatID := chat.Get("id").Int()
 	log.Println("Inserting message:", messageJSON)
-	result, err := tx.tx.Exec(
-		"INSERT OR REPLACE INTO chats (id, chat) VALUES (?, jsonb(?)); "+
-			"INSERT OR REPLACE INTO messages (message_id, message_thread_id, chat_id, message) VALUES (?, ?, ?, jsonb(?));",
-		chatID, chat.Raw, messageID, messageThreadIDSQL, chatID, messageJSON.Raw,
+	stmt, err := tx.tx.Prepare(
+		"INSERT OR REPLACE INTO chats (id, chat) VALUES (?1, jsonb(?2)); " +
+			"INSERT OR REPLACE INTO messages (message_id, message_thread_id, chat_id, message) VALUES (?3, ?4, ?1, jsonb(?5));",
 	)
 	if err != nil {
 		return fmt.Errorf("database error: %v", err)
 	}
+	result, err := stmt.Exec(chatID, chat.Raw, messageID, messageThreadIDSQL, messageJSON.Raw)
+	if err != nil {
+		stmt.Close()
+		return fmt.Errorf("database error: %v", err)
+	}
 	tx.setUpdatedFlag(result)
+	stmt.Close()
 	return nil
 }
 
