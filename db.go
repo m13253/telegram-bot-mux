@@ -203,14 +203,24 @@ func (tx *DatabaseTx) InsertMessage(messageJSON *gjson.Result) error {
 	chat := messageJSON.Get("chat")
 	chatID := chat.Get("id").Int()
 	log.Println("Inserting message:", messageJSON)
-	stmt, err := tx.tx.Prepare(
-		"INSERT OR REPLACE INTO chats (id, chat) VALUES (?1, jsonb(?2)); " +
-			"INSERT OR REPLACE INTO messages (message_id, message_thread_id, chat_id, message) VALUES (?3, ?4, ?1, jsonb(?5));",
-	)
+
+	stmt, err := tx.tx.Prepare("INSERT OR REPLACE INTO chats (id, chat) VALUES (?, jsonb(?));")
 	if err != nil {
 		return fmt.Errorf("database error: %v", err)
 	}
-	result, err := stmt.Exec(chatID, chat.Raw, messageID, messageThreadIDSQL, messageJSON.Raw)
+	result, err := stmt.Exec(chatID, chat.Raw)
+	if err != nil {
+		stmt.Close()
+		return fmt.Errorf("database error: %v", err)
+	}
+	tx.setUpdatedFlag(result)
+	stmt.Close()
+
+	stmt, err = tx.tx.Prepare("INSERT OR REPLACE INTO messages (message_id, message_thread_id, chat_id, message) VALUES (?, ?, ?, jsonb(?));")
+	if err != nil {
+		return fmt.Errorf("database error: %v", err)
+	}
+	result, err = stmt.Exec(messageID, messageThreadIDSQL, chatID, messageJSON.Raw)
 	if err != nil {
 		stmt.Close()
 		return fmt.Errorf("database error: %v", err)
