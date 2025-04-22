@@ -35,7 +35,7 @@ func OpenDatabase(conf *Config) (*Database, error) {
 			"CREATE TABLE IF NOT EXISTS chats (id INTEGER PRIMARY KEY, chat JSONB NOT NULL); " +
 			"CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL, message JSONB NOT NULL); " +
 			"CREATE TABLE IF NOT EXISTS updates (id INTEGER PRIMARY KEY, upstream_id INTEGER UNIQUE, type TEXT NOT NULL, \"update\" JSONB NOT NULL); " +
-			"CREATE INDEX IF NOT EXISTS idx_message_chat_id ON messages (chat_id, message_id); " +
+			"CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages (chat_id, message_id); " +
 			"COMMIT;")
 	if err != nil {
 		return nil, fmt.Errorf("failed to write to database: %v", err)
