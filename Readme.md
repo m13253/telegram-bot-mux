@@ -1,6 +1,6 @@
 # Telegram-bot-mux
 
-Telegram-bot-mux acts as a reverse proxy, allowing you to put different modules of a Telegram bot into separate processes.
+Telegram-bot-mux acts as a reverse proxy / bouncer / multiplexer, allowing you to put different modules of a Telegram bot into separate processes.
 
 ## Usage
 
