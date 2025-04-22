@@ -152,9 +152,6 @@ func (s *Server) getUpdates(w http.ResponseWriter, r *http.Request) {
 	if params.Limit == 0 || params.Limit > 100 {
 		params.Limit = 100
 	}
-	if params.Timeout <= 0 {
-		params.Timeout = 0
-	}
 
 	timer := time.After(time.Duration(params.Timeout) * time.Second)
 	for {
