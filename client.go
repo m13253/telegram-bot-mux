@@ -244,7 +244,7 @@ func (c *Client) ForwardRequest(ctx context.Context, s *Server, w http.ResponseW
 
 		ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if ct == "application/json" {
-			_ = json.NewDecoder(io.LimitReader(r.Body, httpBodyLimit+1)).Decode(&params)
+			_ = json.NewDecoder(io.LimitReader(r.Body, httpBodyLimit)).Decode(&params)
 		}
 
 		err := c.waitForCooldown(ctx, params.ChatID)
