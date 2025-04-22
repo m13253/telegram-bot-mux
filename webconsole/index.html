@@ -71,7 +71,7 @@
     <script language="javascript">
         function sendMessage(event) {
             document.getElementById("submit_btn").disabled = true;
-            var xhr = new XMLHttpRequest();
+            let xhr = new XMLHttpRequest();
             xhr.open("POST", "sendMessage", true);
             xhr.timeout = 10000;
             xhr.onload = function () {
@@ -87,7 +87,7 @@
         }
         document.getElementById("send_form").addEventListener("submit", sendMessage);
         function getUpdates(lastmsg) {
-            var xhr = new XMLHttpRequest();
+            let xhr = new XMLHttpRequest();
             xhr.open("POST", "getUpdates", true);
             xhr.timeout = 60000;
             xhr.onload = function () {
