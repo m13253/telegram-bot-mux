@@ -33,9 +33,9 @@ func OpenDatabase(conf *Config) (*Database, error) {
 	_, err = conn.Exec(
 		"BEGIN; " +
 			"CREATE TABLE IF NOT EXISTS chats (id INTEGER PRIMARY KEY, chat JSONB NOT NULL); " +
-			"CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, message_id INTEGER NOT NULL, message_thread_id INTEGER, chat_id INTEGER NOT NULL, message JSONB NOT NULL); " +
+			"CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL, message JSONB NOT NULL); " +
 			"CREATE TABLE IF NOT EXISTS updates (id INTEGER PRIMARY KEY, upstream_id INTEGER UNIQUE, type TEXT NOT NULL, \"update\" JSONB NOT NULL); " +
-			"CREATE INDEX IF NOT EXISTS idx_message_chat_id ON messages (chat_id, message_thread_id, message_id); " +
+			"CREATE INDEX IF NOT EXISTS idx_message_chat_id ON messages (chat_id, message_id); " +
 			"COMMIT;")
 	if err != nil {
 		return nil, fmt.Errorf("failed to write to database: %v", err)
@@ -195,11 +195,6 @@ func (tx *DatabaseTx) InsertEchoUpdate(updateType, updateValue string) error {
 
 func (tx *DatabaseTx) InsertMessage(messageJSON *gjson.Result) error {
 	messageID := messageJSON.Get("message_id").Int()
-	messageThreadID := messageJSON.Get("message_thread_id")
-	messageThreadIDSQL := sql.NullInt64{
-		Int64: messageThreadID.Int(),
-		Valid: messageThreadID.Exists(),
-	}
 	chat := messageJSON.Get("chat")
 	chatID := chat.Get("id").Int()
 	log.Println("Inserting message:", messageJSON)
@@ -216,11 +211,11 @@ func (tx *DatabaseTx) InsertMessage(messageJSON *gjson.Result) error {
 	tx.setUpdatedFlag(result)
 	stmt.Close()
 
-	stmt, err = tx.tx.Prepare("INSERT OR REPLACE INTO messages (message_id, message_thread_id, chat_id, message) VALUES (?, ?, ?, jsonb(?));")
+	stmt, err = tx.tx.Prepare("INSERT OR REPLACE INTO messages (chat_id, message_id, message) VALUES (?, ?, jsonb(?));")
 	if err != nil {
 		return fmt.Errorf("database error: %v", err)
 	}
-	result, err = stmt.Exec(messageID, messageThreadIDSQL, chatID, messageJSON.Raw)
+	result, err = stmt.Exec(chatID, messageID, messageJSON.Raw)
 	if err != nil {
 		stmt.Close()
 		return fmt.Errorf("database error: %v", err)
