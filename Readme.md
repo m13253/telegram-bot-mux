@@ -98,7 +98,7 @@ Telegram-bot-mux implements a queuing system to limit the total message sending 
 
 According to <https://core.telegram.org/bots/faq#my-bot-is-hitting-limits-how-do-i-avoid-this>, we limit the global sending pace to 1/30 sec, private chat to 1 sec, and non-private chat to 3 sec. Private/non-private information is passively collected from prior updates, and defaults to non-private for unknown `chat_id`.
 
-Rate limiting is automatically applied to all API calls with a `chat_id` parameter. It supports URL query string, `application/x-www-form-urlencoded`, `application/json`, but `multipart/form-data` bypasses rate limiting due to memory usage concerns.
+Rate limiting is automatically applied to API calls listed in `client.go:Client.echoUpdateType` and with a `chat_id` parameter. It supports URL query string, `application/x-www-form-urlencoded`, `application/json`, but `multipart/form-data` bypasses rate limiting due to memory usage concerns.
 
 While in queue, the client can cancel the pending API call by canceling the HTTP request.
 

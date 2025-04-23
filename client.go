@@ -48,6 +48,9 @@ func NewClient(conf *Config, db *Database) *Client {
 	c.echoUpdateType = map[string]string{
 		"sendMessage":             "message",
 		"forwardMessage":          "message",
+		"forwardMessages":         "", // We don't generate local echo update, but we rate-limit outgoing requests.
+		"copyMessage":             "",
+		"copyMessages":            "",
 		"sendPhoto":               "message",
 		"sendAudio":               "message",
 		"sendDocument":            "message",
@@ -236,21 +239,24 @@ func (c *Client) ForwardRequest(ctx context.Context, s *Server, w http.ResponseW
 	log.Printf("[HTTP %s] %s\n", r.Method, requestURL)
 
 	if !isFileRequest {
-		params := struct {
-			ChatID int64 `json:"chat_id"`
-		}{}
-		_ = r.ParseForm()
-		params.ChatID, _ = strconv.ParseInt(r.Form.Get("chat_id"), 10, 64)
+		// We only rate limit outgoing API calls in the echoUpdateType list.
+		if _, ok := c.echoUpdateType[urlSuffix]; ok {
+			params := struct {
+				ChatID int64 `json:"chat_id"`
+			}{}
+			_ = r.ParseForm()
+			params.ChatID, _ = strconv.ParseInt(r.Form.Get("chat_id"), 10, 64)
 
-		ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
-		if ct == "application/json" {
-			_ = json.NewDecoder(io.LimitReader(r.Body, httpBodyLimit)).Decode(&params)
-		}
+			ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+			if ct == "application/json" {
+				_ = json.NewDecoder(io.LimitReader(r.Body, httpBodyLimit)).Decode(&params)
+			}
 
-		err := c.waitForCooldown(ctx, params.ChatID)
-		if err != nil {
-			debug.PrintStack()
-			return err
+			err := c.waitForCooldown(ctx, params.ChatID)
+			if err != nil {
+				debug.PrintStack()
+				return err
+			}
 		}
 	}
 
@@ -342,7 +348,7 @@ func (c *Client) processEchoMessage(updateType string, body []byte) {
 	}
 	if result.IsArray() {
 		result.ForEach(cb)
-	} else {
+	} else if result.IsObject() {
 		cb(gjson.Result{}, result)
 	}
 	err = tx.Commit()
