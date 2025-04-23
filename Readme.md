@@ -79,7 +79,7 @@ WantedBy=default.target
 EOF
 
 $ systemctl daemon-reload --user
-$ loginctl enable-linger "$USER"
+$ loginctl enable-linger
 $ systemctl enable --now --user telegram-bot-mux.service
 ```
 
