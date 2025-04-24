@@ -109,6 +109,8 @@ func (c *Client) StartPolling(ctx context.Context) error {
 			c.sleepUntilRetry()
 			continue
 		}
+
+		c.resetRetry()
 		break
 	}
 
