@@ -64,6 +64,7 @@ $ cat >~/.config/systemd/user/telegram-bot-mux.service <<EOF
 [Unit]
 Description=telegram-bot-mux
 After=network.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
