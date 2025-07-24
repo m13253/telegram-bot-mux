@@ -31,11 +31,17 @@ func OpenDatabase(conf *Config) (*Database, error) {
 		return nil, fmt.Errorf("failed to open database: %v", err)
 	}
 	_, err = conn.Exec(
-		"BEGIN; " +
-			"CREATE TABLE IF NOT EXISTS chats (id INTEGER PRIMARY KEY, chat JSONB NOT NULL); " +
-			"CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL, message JSONB NOT NULL, UNIQUE(chat_id, message_id)); " +
-			"CREATE TABLE IF NOT EXISTS updates (id INTEGER PRIMARY KEY, upstream_id INTEGER UNIQUE, type TEXT NOT NULL, \"update\" JSONB NOT NULL); " +
-			"COMMIT;")
+		"PRAGMA journal_mode = WAL;\n" +
+			"PRAGMA journal_size_limit = 0;\n" +
+			"PRAGMA wal_autocheckpoint = 1;\n" +
+			"PRAGMA optimize = 0x10002;\n" +
+			"BEGIN TRANSACTION;\n" +
+			"CREATE TABLE IF NOT EXISTS chats (id INTEGER PRIMARY KEY, chat JSONB NOT NULL);\n" +
+			"CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL, message JSONB NOT NULL, UNIQUE(chat_id, message_id));\n" +
+			"CREATE TABLE IF NOT EXISTS updates (id INTEGER PRIMARY KEY, upstream_id INTEGER UNIQUE, type TEXT NOT NULL, \"update\" JSONB NOT NULL);\n" +
+			"COMMIT;\n" +
+			"PRAGMA optimize;",
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to write to database: %v", err)
 	}
